@@ -1,0 +1,47 @@
+[project]
+name = "monitor-localization"
+version = "0.1.0"
+description = "Can chunk-wise monitoring recover blind spots of global LLM monitors?"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+
+dependencies = [
+    "anthropic>=0.40",
+    "datasets>=3.0",
+    "pyarrow>=17",
+    "pydantic>=2.7",
+    "pyyaml>=6",
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "scikit-learn>=1.5",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+analysis = [
+    "jupyter>=1.0",
+    "matplotlib>=3.8",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/monitor_localization"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

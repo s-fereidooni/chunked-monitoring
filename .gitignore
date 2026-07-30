@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Environment
+.env
+
+# Data — large, gated, and reproducible from the evaluation subset IDs.
+# data/evaluation_subset.json is NOT ignored: it defines reproducibility.
+# These directories are created at runtime by paths.ensure_dir().
+data/raw/
+data/processed/
+
+# Experiment outputs
+results/
+
+# LLM response cache
+.cache/
+
+# OS
+.DS_Store
