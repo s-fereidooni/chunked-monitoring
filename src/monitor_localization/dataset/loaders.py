@@ -28,11 +28,14 @@ logger = get_logger(__name__)
 FlattenStrategy = Literal["longest_input", "concat_all"]
 
 _GATED_HELP = (
-    "MALT is a gated dataset. Two steps are required:\n"
-    "  1. Accept the terms at https://huggingface.co/datasets/metr-evals/malt-public\n"
-    "     while signed in to Hugging Face.\n"
-    "  2. Provide a token via HF_TOKEN in .env, or run `huggingface-cli login`.\n"
-    "Without both, the parquet files return HTTP 401."
+    "MALT is a gated dataset. Distinguish the two failures by status code:\n"
+    "\n"
+    "  401 — no token, or an invalid one. Set HF_TOKEN in .env, or run\n"
+    "        `huggingface-cli login`.\n"
+    "  403 — the token is fine but this account is not on the authorized list.\n"
+    "        Request access at\n"
+    "        https://huggingface.co/datasets/metr-evals/malt-public\n"
+    "        and wait for it to be granted; a valid token alone is not enough.\n"
 )
 
 
