@@ -15,8 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from monitor_localization.paths import CONFIGS_DIR, RESULTS_DIR
 
-Effort = Literal["low", "medium", "high", "xhigh", "max"]
-ThinkingMode = Literal["adaptive", "disabled"]
+ModelProvider = Literal["openai"]
 AggregationMethod = Literal["max", "mean", "noisy_or", "topk_mean"]
 ChunkUnit = Literal["messages", "characters"]
 
@@ -75,29 +74,25 @@ class SubsetConfig(StrictModel):
 
 
 class ModelConfig(StrictModel):
-    """Monitor LLM settings.
+    """Monitor LLM settings for the initial OpenAI-based experiment."""
 
-    `temperature` defaults to None and is omitted from the request entirely when
-    unset. This is deliberate: claude-opus-5 and the other current models reject
-    `temperature` with a 400, so a non-None value is only valid on older models.
-    """
-
-    name: str = "claude-opus-5"
-    max_tokens: int = 4096
-    effort: Effort = "high"
-    thinking: ThinkingMode = "adaptive"
-    temperature: float | None = None
+    provider: ModelProvider = "openai"
+    name: str = "gpt-4.1-mini"
+    max_tokens: int = 256
+    temperature: float = 0.0
     max_concurrency: int = 8
     max_retries: int = 4
 
     @model_validator(mode="after")
-    def _warn_on_temperature(self) -> ModelConfig:
-        if self.temperature is not None and self.thinking == "adaptive":
-            raise ValueError(
-                "temperature cannot be combined with adaptive thinking. Current Claude "
-                "models reject `temperature` outright; set thinking='disabled' and use an "
-                "older model, or leave temperature unset."
-            )
+    def _check_limits(self) -> ModelConfig:
+        if self.max_tokens < 1:
+            raise ValueError("max_tokens must be >= 1")
+        if not 0.0 <= self.temperature <= 2.0:
+            raise ValueError("temperature must be in [0, 2]")
+        if self.max_concurrency < 1:
+            raise ValueError("max_concurrency must be >= 1")
+        if self.max_retries < 0:
+            raise ValueError("max_retries must be >= 0")
         return self
 
 

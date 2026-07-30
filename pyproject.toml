@@ -7,7 +7,7 @@ license = { file = "LICENSE" }
 requires-python = ">=3.11"
 
 dependencies = [
-    "anthropic>=0.40",
+    "openai>=1.0",
     "datasets>=3.0",
     "pyarrow>=17",
     "pydantic>=2.7",

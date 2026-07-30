@@ -19,6 +19,10 @@ uv pip install -e ".[analysis,dev]"
 cp .env.example .env    # then fill in
 ```
 
+The baseline monitor is OpenAI's `gpt-4.1-mini`, configured for deterministic,
+short structured verdicts. Set `OPENAI_API_KEY` in `.env` before running monitor
+stages.
+
 ### Dataset access
 
 The dataset is [MALT](https://metr.org/blog/2025-10-14-malt-dataset-of-natural-and-prompted-behaviors/)

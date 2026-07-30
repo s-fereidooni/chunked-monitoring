@@ -18,18 +18,21 @@ def test_shipped_configs_all_valid():
         ExperimentConfig.from_yaml(path)
 
 
-def test_temperature_unset_by_default():
-    # Current Claude models reject `temperature`; it must not be sent implicitly.
-    assert ModelConfig().temperature is None
+def test_default_monitor_is_gpt_4_1_mini():
+    cfg = ModelConfig()
+    assert cfg.provider == "openai"
+    assert cfg.name == "gpt-4.1-mini"
+    assert cfg.max_tokens == 256
+    assert cfg.temperature == 0.0
 
 
-def test_temperature_with_adaptive_thinking_rejected():
+def test_temperature_must_be_an_openai_supported_value():
     with pytest.raises(ValidationError):
-        ModelConfig(temperature=0.0, thinking="adaptive")
+        ModelConfig(temperature=2.1)
 
 
-def test_temperature_allowed_when_thinking_disabled():
-    assert ModelConfig(temperature=0.0, thinking="disabled").temperature == 0.0
+def test_valid_temperature_is_accepted():
+    assert ModelConfig(temperature=1.0).temperature == 1.0
 
 
 def test_overlap_must_be_less_than_size():
