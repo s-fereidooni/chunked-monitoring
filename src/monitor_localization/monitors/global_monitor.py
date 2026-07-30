@@ -54,9 +54,18 @@ class GlobalMonitor(Monitor):
         would otherwise manufacture false negatives.
         """
         user = render_for_monitor(transcript)
+        # Two distinct models are in play: the monitor, and the model that
+        # produced the transcript. Both are recorded under unambiguous keys — the
+        # failure analysis breaks recall down by the monitored run's provenance
+        # (notably prompted vs natural), which needs that metadata carried through.
         base_metadata: dict[str, Any] = {
-            "model": self.model.name,
+            "monitor_model": self.model.name,
             "prompt": self.prompt.describe(),
+            "monitored_model": transcript.model,
+            "run_source": transcript.run_source,
+            "has_chain_of_thought": transcript.has_chain_of_thought,
+            "manually_reviewed": transcript.manually_reviewed,
+            "task_id": transcript.task_id,
             "n_messages": transcript.n_messages,
             "n_characters": transcript.n_characters,
         }

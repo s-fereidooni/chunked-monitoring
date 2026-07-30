@@ -1,0 +1,53 @@
+"""Stage 3 evaluation: metrics and failure-mode inspection."""
+
+from monitor_localization.evaluation.failures import (
+    FAILED,
+    FALSE_NEGATIVE,
+    FALSE_POSITIVE,
+    TRUE_NEGATIVE,
+    TRUE_POSITIVE,
+    classify,
+    errors,
+    false_negatives,
+    false_positives,
+    format_failure_digest,
+    per_sample_table,
+    recall_by,
+    recall_by_label,
+)
+from monitor_localization.evaluation.metrics import (
+    DEFAULT_TARGET_FPR,
+    DEFAULT_THRESHOLD,
+    ConfusionMatrix,
+    confusion_at_threshold,
+    detection_rate_at_fpr,
+    evaluate,
+    roc_auc,
+    score_distribution,
+    threshold_at_fpr,
+)
+
+__all__ = [
+    "DEFAULT_TARGET_FPR",
+    "DEFAULT_THRESHOLD",
+    "FAILED",
+    "FALSE_NEGATIVE",
+    "FALSE_POSITIVE",
+    "TRUE_NEGATIVE",
+    "TRUE_POSITIVE",
+    "ConfusionMatrix",
+    "classify",
+    "confusion_at_threshold",
+    "detection_rate_at_fpr",
+    "errors",
+    "evaluate",
+    "false_negatives",
+    "false_positives",
+    "format_failure_digest",
+    "per_sample_table",
+    "recall_by",
+    "recall_by_label",
+    "roc_auc",
+    "score_distribution",
+    "threshold_at_fpr",
+]
