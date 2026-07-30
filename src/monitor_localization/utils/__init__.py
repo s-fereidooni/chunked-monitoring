@@ -1,5 +1,6 @@
 """Shared helpers: logging setup and JSON/JSONL I/O."""
 
+from monitor_localization.utils.env import load_env
 from monitor_localization.utils.io import (
     append_jsonl,
     read_json,
@@ -12,6 +13,7 @@ from monitor_localization.utils.logging import get_logger, setup_logging
 __all__ = [
     "append_jsonl",
     "get_logger",
+    "load_env",
     "read_json",
     "read_jsonl",
     "setup_logging",
