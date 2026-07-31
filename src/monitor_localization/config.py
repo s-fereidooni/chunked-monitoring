@@ -89,6 +89,10 @@ class ModelConfig(StrictModel):
     temperature: float = 0.0
     max_concurrency: int = 8
     max_retries: int = 4
+    # Largest single request we will attempt, in input tokens. MALT's biggest
+    # transcripts reach ~480k, above the account's 400k tokens-per-minute cap, so
+    # they are rejected outright rather than retried. 0 disables the guard.
+    max_input_tokens: int = 350_000
 
     @model_validator(mode="after")
     def _check_limits(self) -> ModelConfig:

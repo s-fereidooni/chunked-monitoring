@@ -21,9 +21,32 @@ logger = get_logger(__name__)
 
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
 
-# Long transcripts make for large prompts; the default SDK timeout is tight for
-# them. Not a config knob until there's a reason to vary it per experiment.
-REQUEST_TIMEOUT_SECONDS = 120.0
+# Long transcripts make for large prompts; the default SDK timeout is far too
+# tight for a 300k-token request. Scaled with input size rather than fixed.
+BASE_TIMEOUT_SECONDS = 120.0
+SECONDS_PER_1K_TOKENS = 0.6
+MAX_TIMEOUT_SECONDS = 900.0
+
+# Rough chars-per-token for MALT transcripts, measured with o200k_base on 36 real
+# runs (aggregate 4.40). Used only for the pre-flight size guard, so an estimate
+# is sufficient and avoids a tokenizer dependency on the hot path.
+CHARS_PER_TOKEN = 4.4
+
+
+def estimate_tokens(text: str) -> int:
+    return int(len(text) / CHARS_PER_TOKEN)
+
+
+def _timeout_for(prompt_chars: int) -> float:
+    tokens = estimate_tokens_from_chars(prompt_chars)
+    return min(
+        BASE_TIMEOUT_SECONDS + (tokens / 1000.0) * SECONDS_PER_1K_TOKENS,
+        MAX_TIMEOUT_SECONDS,
+    )
+
+
+def estimate_tokens_from_chars(chars: int) -> int:
+    return int(chars / CHARS_PER_TOKEN)
 
 
 class MonitorLLMError(RuntimeError):
@@ -45,6 +68,28 @@ class TruncatedResponseError(MonitorLLMError):
 
 class RefusalError(MonitorLLMError):
     """The model declined to answer. Distinct from a low suspiciousness score."""
+
+
+class TranscriptTooLargeError(MonitorLLMError):
+    """The request exceeds what the account can send in a single call.
+
+    MALT's largest transcripts run to ~480k tokens, above a 400k tokens-per-minute
+    account limit, so no amount of retrying will get them through as one request.
+    Detected before sending rather than as a 429, so the run is not billed and the
+    reason is unambiguous.
+
+    This is a property of the *global* architecture, not of the transcript: the
+    chunk monitor sends the same content in pieces that each fit comfortably. Runs
+    that trip this are worth reporting rather than quietly dropping.
+    """
+
+
+class UpstreamError(MonitorLLMError):
+    """An SDK or transport failure (connection dropped, 429, 5xx, timeout).
+
+    Wrapped so a single bad transcript is recorded as a failed row rather than
+    aborting a 562-run stage partway through.
+    """
 
 
 @dataclass(slots=True)
@@ -96,6 +141,9 @@ class MonitorClient:
         self.cache = cache if cache is not None else ResponseCache()
         self._client = client
         self.usage = Usage()
+        # Per-request input budget. Defaults below the account's 400k TPM cap so
+        # a single request can actually be admitted; 0 disables the guard.
+        self.max_input_tokens = getattr(self.cfg, "max_input_tokens", 350_000)
 
     # -- client construction -------------------------------------------------
 
@@ -145,6 +193,17 @@ class MonitorClient:
         payload = self._request_payload(system, user, schema)
         key = cache_key(payload)
 
+        # Pre-flight size guard. Checked before the cache so an oversized request
+        # is never silently satisfied by a stale entry either.
+        estimated = estimate_tokens(system) + estimate_tokens(user)
+        limit = self.max_input_tokens
+        if limit and estimated > limit:
+            raise TranscriptTooLargeError(
+                f"Estimated {estimated:,} input tokens exceeds the {limit:,}-token "
+                "per-request budget, so this cannot be sent as a single call. "
+                "The chunk monitor can still score this transcript."
+            )
+
         cached = self.cache.get(key)
         if cached is not None:
             usage = Usage(
@@ -161,17 +220,24 @@ class MonitorClient:
                 finish_reason=cached.get("finish_reason"),
             )
 
-        response = self.client.chat.completions.parse(
-            model=self.cfg.name,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            response_format=schema,
-            temperature=self.cfg.temperature,
-            max_completion_tokens=self.cfg.max_tokens,
-            timeout=REQUEST_TIMEOUT_SECONDS,
-        )
+        try:
+            response = self.client.chat.completions.parse(
+                model=self.cfg.name,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                response_format=schema,
+                temperature=self.cfg.temperature,
+                max_completion_tokens=self.cfg.max_tokens,
+                timeout=_timeout_for(len(system) + len(user)),
+            )
+        except MonitorLLMError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - any SDK/transport failure
+            # Recorded as a failed row rather than aborting the stage. The SDK has
+            # already exhausted its own retries by this point.
+            raise UpstreamError(f"{type(exc).__name__}: {exc}") from exc
 
         choice = response.choices[0]
         finish_reason = getattr(choice, "finish_reason", None)

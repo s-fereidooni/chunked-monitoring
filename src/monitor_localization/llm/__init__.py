@@ -7,7 +7,9 @@ from monitor_localization.llm.client import (
     MonitorClient,
     MonitorLLMError,
     RefusalError,
+    TranscriptTooLargeError,
     TruncatedResponseError,
+    UpstreamError,
     Usage,
 )
 
@@ -18,7 +20,9 @@ __all__ = [
     "MonitorLLMError",
     "RefusalError",
     "ResponseCache",
+    "TranscriptTooLargeError",
     "TruncatedResponseError",
+    "UpstreamError",
     "Usage",
     "cache_key",
 ]
