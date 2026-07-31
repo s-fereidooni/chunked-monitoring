@@ -22,10 +22,9 @@ from monitor_localization.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Which sample within a run to treat as the transcript. MALT stores `samples` as
-# the sequence of API calls in the agent loop; each sample's `input` is the whole
-# conversation so far, so the widest input plus its completion is the full run.
-FlattenStrategy = Literal["longest_input", "concat_all"]
+# How to linearise a run's message DAG. See flatten_samples for why `dag` is the
+# only strategy correct across both of MALT's row shapes.
+FlattenStrategy = Literal["dag", "longest_input", "concat_all"]
 
 _GATED_HELP = (
     "MALT is a gated dataset. Distinguish the two failures by status code:\n"
@@ -107,53 +106,117 @@ def metadata_table(cfg: DatasetConfig | None = None) -> pd.DataFrame:
     return df
 
 
+def _first_choice(sample: dict[str, Any]) -> list[dict[str, Any]]:
+    """The sample's first completion, as a list of messages.
+
+    `output` is list[list[message]] — a list of sampled choices, each a message
+    list — but tolerate a flat list[message] too.
+    """
+    output = sample.get("output") or []
+    if not output:
+        return []
+    first = output[0]
+    if isinstance(first, dict):
+        return [m for m in output if isinstance(m, dict)]
+    return list(first or [])
+
+
+def _node_id(raw: dict[str, Any]) -> int | None:
+    return (raw.get("metadata") or {}).get("node_id")
+
+
 def flatten_samples(
     samples: Sequence[dict[str, Any]],
-    strategy: FlattenStrategy = "longest_input",
+    strategy: FlattenStrategy = "dag",
 ) -> list[Message]:
     """Collapse a run's `samples` into one linear message list.
 
-    MALT stores `samples` as the successive API calls of an agent loop. Each
-    sample's `input` is the full conversation sent to the model at that step, and
-    `output` is a list of completion choices, each itself a list of messages.
+    MALT rows hold a *DAG* of messages, exposed as a list of samples. Two shapes
+    occur, and a strategy that handles only one silently discards most of the
+    other:
 
-    `longest_input` (default) takes the sample with the widest input — the last
-    step of the loop — and appends its first completion. That reconstructs the
-    run without duplicating the prefix that every earlier sample also contains.
+    - **Growing conversation.** Successive agent-loop steps, each sample's
+      `input` containing the whole conversation so far. Input messages repeat
+      across samples and share `node_id`s.
+    - **Independent calls.** Many samples each with a single-message `input`
+      (e.g. 107 separate one-shot calls). Nothing repeats; every message is
+      distinct.
 
-    `concat_all` concatenates every sample's completion onto the first input,
-    which is only correct for runs whose inputs grow strictly monotonically.
+    `dag` (default) reconstructs both: input messages are deduplicated by
+    `node_id` and ordered by it, and each sample's completion is inserted
+    directly after the input it answered. Output messages carry no `node_id`, so
+    a completion already absorbed into a later sample's input is recognised by
+    content and not emitted twice.
+
+    The legacy strategies are kept for comparison and are *both wrong* on at
+    least one shape. `longest_input` takes the widest single input plus its
+    completion — on independent-call runs that is 2 messages out of 200+, and
+    even on growing runs it misses sibling branches of the DAG. `concat_all`
+    duplicates the shared prefix on growing runs.
     """
     if not samples:
         return []
 
-    def first_choice(sample: dict[str, Any]) -> list[dict[str, Any]]:
-        output = sample.get("output") or []
-        if not output:
-            return []
-        first = output[0]
-        # `output` is list[list[message]]; tolerate a flat list[message] too.
-        if isinstance(first, dict):
-            return [m for m in output if isinstance(m, dict)]
-        return list(first or [])
-
     if strategy == "longest_input":
         widest = max(samples, key=lambda s: len(s.get("input") or []))
-        raw = list(widest.get("input") or []) + first_choice(widest)
-    elif strategy == "concat_all":
+        raw = list(widest.get("input") or []) + _first_choice(widest)
+        return [Message.from_raw(m) for m in raw if isinstance(m, dict)]
+
+    if strategy == "concat_all":
         ordered = sorted(samples, key=lambda s: len(s.get("input") or []))
         raw = list(ordered[0].get("input") or [])
         for sample in ordered:
-            raw += first_choice(sample)
-    else:  # pragma: no cover - guarded by Literal
+            raw += _first_choice(sample)
+        return [Message.from_raw(m) for m in raw if isinstance(m, dict)]
+
+    if strategy != "dag":  # pragma: no cover - guarded by Literal
         raise ValueError(f"unknown flatten strategy {strategy!r}")
 
-    return [Message.from_raw(m) for m in raw if isinstance(m, dict)]
+    # --- DAG reconstruction ---
+    # (sort_key, tier, sequence) keeps completions adjacent to their input.
+    items: list[tuple[float, int, int, dict[str, Any]]] = []
+    seen_nodes: set[int] = set()
+    seen_content: set[tuple[str, str]] = set()
+    fallback = 0
+
+    for sample in samples:
+        inputs = [m for m in (sample.get("input") or []) if isinstance(m, dict)]
+        last_key: float | None = None
+        for raw in inputs:
+            node = _node_id(raw)
+            if node is None:
+                # No DAG id: keep positionally, after everything seen so far.
+                fallback += 1
+                key = float(fallback)
+            else:
+                key = float(node)
+                if node in seen_nodes:
+                    last_key = key
+                    continue
+                seen_nodes.add(node)
+            last_key = key
+            items.append((key, 0, 0, raw))
+            seen_content.add((raw.get("role") or "", raw.get("content") or ""))
+
+        anchor = last_key if last_key is not None else float(fallback)
+        for offset, raw in enumerate(_first_choice(sample)):
+            if not isinstance(raw, dict):
+                continue
+            signature = (raw.get("role") or "", raw.get("content") or "")
+            # A completion that reappears as a later sample's input would
+            # otherwise be emitted twice.
+            if signature in seen_content:
+                continue
+            seen_content.add(signature)
+            items.append((anchor, 1, offset, raw))
+
+    items.sort(key=lambda item: (item[0], item[1], item[2]))
+    return [Message.from_raw(raw) for _, _, _, raw in items]
 
 
 def row_to_transcript(
     row: dict[str, Any],
-    strategy: FlattenStrategy = "longest_input",
+    strategy: FlattenStrategy = "dag",
 ) -> Transcript:
     """Build a `Transcript` from one raw parquet row."""
     meta = row.get("metadata") or {}
@@ -173,7 +236,7 @@ def row_to_transcript(
 def iter_transcripts(
     run_ids: Sequence[int] | None = None,
     cfg: DatasetConfig | None = None,
-    strategy: FlattenStrategy = "longest_input",
+    strategy: FlattenStrategy = "dag",
 ) -> Iterator[Transcript]:
     """Yield transcripts, optionally restricted to `run_ids`.
 
@@ -220,7 +283,7 @@ def iter_transcripts(
 def load_transcripts(
     run_ids: Sequence[int],
     cfg: DatasetConfig | None = None,
-    strategy: FlattenStrategy = "longest_input",
+    strategy: FlattenStrategy = "dag",
 ) -> list[Transcript]:
     """Materialise transcripts for `run_ids`, preserving the requested order."""
     by_id = {t.run_id: t for t in iter_transcripts(run_ids, cfg=cfg, strategy=strategy)}
