@@ -51,6 +51,13 @@ class SubsetConfig(StrictModel):
     keeps the composition explicit and controllable.
     """
 
+    # Quotas per behavior family, e.g. {"reward_hacking": "all",
+    # "sandbagging_sabotage": 200, "benign": 300}. "all" takes the whole pool,
+    # which is the only sensible setting for reward hacking (62 runs total).
+    # When set, this takes precedence over n_samples / positive_fraction /
+    # max_prompted_fraction, which describe the older is_positive stratification.
+    family_quotas: dict[str, int | Literal["all"]] | None = None
+
     n_samples: int = 500
     seed: int = 0
     manually_reviewed_only: bool = True

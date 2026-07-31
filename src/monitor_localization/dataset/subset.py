@@ -68,6 +68,9 @@ def build_subset(
     if pool.empty:
         raise ValueError("No candidate runs after filtering; check manually_reviewed_only.")
 
+    if cfg.family_quotas:
+        return _build_by_family(metadata, pool, cfg, rng)
+
     positives = pool[pool["is_positive"]]
     negatives = pool[~pool["is_positive"]]
 
@@ -119,6 +122,73 @@ def build_subset(
     for message in warnings:
         logger.warning(message)
     return _manifest(metadata, pool, selected, cfg, warnings=warnings)
+
+
+def _families(labels: list[str]) -> set[str]:
+    """Behavior families a run belongs to; empty set means benign."""
+    from monitor_localization.dataset.schema import BENIGN_LABEL, label_group
+
+    return {label_group(x) for x in labels if x != BENIGN_LABEL}
+
+
+def _build_by_family(
+    metadata: pd.DataFrame,
+    pool: pd.DataFrame,
+    cfg: SubsetConfig,
+    rng: np.random.Generator,
+) -> dict[str, Any]:
+    """Draw a quota per behavior family.
+
+    Families are filled scarcest-first so that a run belonging to two families is
+    kept by the one that can least afford to lose it — with 62 reward-hacking
+    runs against 1,073 sandbagging ones, the three overlapping runs matter to the
+    former and are noise to the latter.
+    """
+    quotas = dict(cfg.family_quotas or {})
+    benign_quota = quotas.pop("benign", 0)
+    warnings: list[str] = []
+
+    pool = pool.copy()
+    pool["families"] = pool["labels"].apply(_families)
+
+    pools = {
+        family: pool[pool["families"].apply(lambda fs, f=family: f in fs)]
+        for family in quotas
+    }
+    # Scarcest first.
+    order = sorted(quotas, key=lambda f: len(pools[f]))
+
+    selected: list[int] = []
+    per_family: dict[str, int] = {}
+    for family in order:
+        available = pools[family]
+        available = available[~available["run_id"].isin(selected)]
+        quota = quotas[family]
+        want = len(available) if quota == "all" else int(quota)
+        picked = _sample_ids(available, want, rng)
+        if want > len(available):
+            warnings.append(
+                f"Family {family!r}: wanted {want} but only {len(available)} available."
+            )
+        per_family[family] = len(picked)
+        selected.extend(picked)
+
+    benign_pool = pool[pool["families"].apply(len) == 0]
+    want_benign = len(benign_pool) if benign_quota == "all" else int(benign_quota)
+    picked_benign = _sample_ids(benign_pool, want_benign, rng)
+    if want_benign > len(benign_pool):
+        warnings.append(
+            f"Benign: wanted {want_benign} but only {len(benign_pool)} available."
+        )
+    per_family["benign"] = len(picked_benign)
+    selected.extend(picked_benign)
+
+    for message in warnings:
+        logger.warning(message)
+
+    manifest = _manifest(metadata, pool, sorted(selected), cfg, warnings=warnings)
+    manifest["composition"]["by_family"] = per_family
+    return manifest
 
 
 def _manifest(

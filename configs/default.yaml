@@ -16,9 +16,20 @@ dataset:
   split: public
 
 subset:
-  n_samples: 500
+  # Quotas per behavior family. Reward hacking takes everything (62 runs in the
+  # reviewed pool) because it is the binding constraint on statistical power.
+  # Sandbagging is capped at 200: that already resolves a ~3pp recall change,
+  # and the remaining ~870 runs buy precision finer than any claim we make.
+  # Benign sets the 5% FPR threshold, so 300 puts ~15 runs at the cut.
+  family_quotas:
+    reward_hacking: all
+    sandbagging_sabotage: 200
+    benign: 300
+
   seed: 0
   manually_reviewed_only: true
+  # Below here applies only when family_quotas is unset.
+  n_samples: 500
   # ~92% of MALT's reviewed positives are `prompted`; stratify so the subset
   # isn't dominated by a single model's prompted behavior.
   stratify_by: [is_positive, run_source]

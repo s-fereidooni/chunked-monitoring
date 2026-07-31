@@ -62,7 +62,12 @@ def main() -> int:
     print(f"Selected:       {manifest['n_selected']} runs\n")
     print("Composition")
     for key, value in manifest["composition"].items():
-        print(f"  {key:24} {value:>6}")
+        if isinstance(value, dict):
+            print(f"  {key}")
+            for sub_key, sub_value in value.items():
+                print(f"    {sub_key:22} {sub_value:>6}")
+        else:
+            print(f"  {key:24} {value:>6}")
     print("\nLabels")
     for label, count in manifest["label_counts"].items():
         print(f"  {label:28} {count:>6}")
