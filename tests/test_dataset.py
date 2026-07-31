@@ -32,6 +32,46 @@ def test_label_groups():
     assert label_group("some_future_label") == "unknown"
 
 
+def test_taxonomy_matches_metr_grouping():
+    """Pin the full taxonomy — this drifted once and is easy to get wrong.
+
+    Source: METR's MALT release post. `hardcoded_solution` is our one
+    documented deviation (METR files it under miscellaneous).
+    """
+    expected = {
+        "bypass_constraints": "reward_hacking",
+        "ignores_task_instructions": "reward_hacking",
+        "hardcoded_solution": "reward_hacking",  # deviation from METR, deliberate
+        "gives_up": "sandbagging_sabotage",
+        "match_weaker_model": "sandbagging_sabotage",
+        "partial_problem_solving": "sandbagging_sabotage",
+        "reasoning_about_task": "sandbagging_sabotage",
+        "refusals": "sandbagging_sabotage",
+        "sabotage": "sandbagging_sabotage",
+        "evaluation_awareness": "miscellaneous",
+        "brute_forced_solution": "miscellaneous",
+        "normal": "benign",
+    }
+    assert {label: label_group(label) for label in expected} == expected
+
+
+def test_every_label_in_malt_public_is_mapped():
+    """No label present in the real dataset may resolve to 'unknown'."""
+    observed = [
+        "normal",
+        "refusals",
+        "reasoning_about_task",
+        "sabotage",
+        "partial_problem_solving",
+        "match_weaker_model",
+        "ignores_task_instructions",
+        "bypass_constraints",
+        "gives_up",
+        "hardcoded_solution",
+    ]
+    assert [label_group(label) for label in observed].count("unknown") == 0
+
+
 def test_render_includes_tool_calls():
     transcript = row_to_transcript(make_row())
     rendered = transcript.render()

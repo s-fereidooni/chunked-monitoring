@@ -12,14 +12,22 @@ from typing import Any
 # MALT's benign label. A run is behavior-positive iff it carries any other label.
 BENIGN_LABEL = "normal"
 
-# Behavior labels, grouped as in METR's release post. Membership is used for
-# per-category breakdowns in the failure analysis, not for scoring.
+# Behavior labels, grouped following METR's release post:
+# https://metr.org/blog/2025-10-14-malt-dataset-of-natural-and-prompted-behaviors/
+#
+# One deliberate deviation: METR places `hardcoded_solution` under miscellaneous,
+# but we group it with reward hacking. Hardcoding to the tests is reward hacking
+# by any ordinary reading, and it is the paradigm case of *locally evidenced*
+# misconduct — a single visible edit — which is exactly the property the
+# chunk-vs-global comparison is about. It also keeps 15 of the scarcest runs in
+# the family that needs them: reward hacking totals 66 runs with it, 51 without.
+# This deviation must be disclosed in any write-up, since it makes our
+# reward-hacking numbers not directly comparable to METR's.
 REWARD_HACKING = frozenset(
     {
         "bypass_constraints",
         "ignores_task_instructions",
         "hardcoded_solution",
-        "brute_force",
     }
 )
 SANDBAGGING_SABOTAGE = frozenset(
@@ -27,11 +35,18 @@ SANDBAGGING_SABOTAGE = frozenset(
         "gives_up",
         "match_weaker_model",
         "partial_problem_solving",
+        # Prompted models were told to reason about features irrelevant to the
+        # task — whether it was an eval, how well to perform, what category it
+        # belonged to. METR groups this with sandbagging, so we do too.
+        "reasoning_about_task",
         "refusals",
         "sabotage",
     }
 )
-MISCELLANEOUS = frozenset({"reasoning_about_task"})
+# Present in METR's taxonomy but absent from malt-public; listed so that a run
+# carrying one resolves to a real group rather than "unknown" if the public
+# release later gains them. `hardcoded_solution` is intentionally not here.
+MISCELLANEOUS = frozenset({"evaluation_awareness", "brute_forced_solution"})
 
 BEHAVIOR_LABELS = REWARD_HACKING | SANDBAGGING_SABOTAGE | MISCELLANEOUS
 ALL_LABELS = BEHAVIOR_LABELS | {BENIGN_LABEL}
