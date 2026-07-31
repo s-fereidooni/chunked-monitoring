@@ -102,6 +102,10 @@ class ChunkConfig(StrictModel):
     size: int = 10
     overlap: int = 0
     unit: ChunkUnit = "messages"
+    # Opening messages repeated with every chunk so each one can see what the
+    # agent was asked to do. Follows METR's MALT baseline, which repeats the
+    # first five. Set to 0 to disable and make each chunk fully standalone.
+    context_messages: int = 5
 
     @model_validator(mode="after")
     def _check_overlap(self) -> ChunkConfig:
@@ -109,6 +113,10 @@ class ChunkConfig(StrictModel):
             raise ValueError(f"overlap ({self.overlap}) must be < size ({self.size})")
         if self.overlap < 0:
             raise ValueError("overlap must be >= 0")
+        if self.size < 1:
+            raise ValueError("size must be >= 1")
+        if self.context_messages < 0:
+            raise ValueError("context_messages must be >= 0")
         return self
 
 

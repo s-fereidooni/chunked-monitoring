@@ -77,11 +77,48 @@ def test_missing_prompt_lists_alternatives():
 
 
 def test_chunk_prompt_addresses_partial_context():
-    # The chunk monitor must be told not to penalise missing context, or every
-    # chunk looks suspicious for lacking the task description.
+    # The chunk monitor must know it is seeing a fragment, and must not be
+    # pushed toward speculating about the parts it cannot see.
     text = load_prompt("chunk_monitor", "v1").text.lower()
     assert "excerpt" in text
-    assert "missing context is not evidence" in text
+    assert "do not speculate" in text
+    assert "score the excerpt itself" in text
+
+
+def test_prompts_do_not_enumerate_the_label_taxonomy():
+    """Guards against re-introducing answer-key leakage.
+
+    Listing MALT's label names in the prompt makes measured recall partly an
+    artifact of prompt engineering rather than monitoring capability. The
+    published setups (SHADE-Arena, METR) describe the construct instead.
+    """
+    labels = [
+        "bypass_constraints",
+        "hardcoded_solution",
+        "match_weaker_model",
+        "partial_problem_solving",
+        "gives_up",
+        "reward hacking",
+        "sandbagging",
+    ]
+    for name in ("global_monitor", "chunk_monitor"):
+        text = load_prompt(name, "v1").text.lower()
+        leaked = [label for label in labels if label.replace("_", " ") in text or label in text]
+        assert not leaked, f"{name} leaks label names: {leaked}"
+
+
+def test_prompts_do_not_instruct_score_distribution():
+    """No anti-clustering instruction.
+
+    Score clustering is a documented problem, but published work addresses it
+    methodologically (comparative scoring, prompt optimisation), not by telling
+    the model how to distribute its scores. Instructing the distribution biases
+    the exact quantity being measured.
+    """
+    for name in ("global_monitor", "chunk_monitor"):
+        text = load_prompt(name, "v1").text.lower()
+        for phrase in ("full range", "do not cluster", "round numbers", "midpoint"):
+            assert phrase not in text, f"{name} instructs score distribution: {phrase!r}"
 
 
 # --- verdict schema ---------------------------------------------------------
@@ -210,7 +247,7 @@ def test_global_monitor_sends_transcript_text_and_prompt(tmp_path):
     monitor.judge(row_to_transcript(make_row()))
     messages = completions.calls[0]["messages"]
     assert messages[0]["role"] == "system"
-    assert "reward hacking" in messages[0]["content"].lower()
+    assert "integrity of an evaluation" in messages[0]["content"].lower()
     assert "[assistant]" in messages[1]["content"]
 
 

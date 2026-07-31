@@ -40,6 +40,9 @@ chunk:
   size: 10
   overlap: 0
   unit: messages
+  # METR's MALT baseline repeats the first five messages across all chunks so
+  # each one can see the task description.
+  context_messages: 5
 
 aggregation:
   method: max

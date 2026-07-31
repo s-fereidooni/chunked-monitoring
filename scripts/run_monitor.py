@@ -24,7 +24,7 @@ from monitor_localization.dataset import (
 )
 from monitor_localization.experiment import ExperimentRun
 from monitor_localization.llm import MonitorClient, ResponseCache
-from monitor_localization.monitors import GlobalMonitor
+from monitor_localization.monitors import ChunkMonitor, GlobalMonitor
 from monitor_localization.utils import append_jsonl, load_env, setup_logging
 from monitor_localization.utils.logging import get_logger
 
@@ -74,6 +74,12 @@ def calibrate(monitor: GlobalMonitor, transcripts: list, cap: int) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="default")
+    parser.add_argument(
+        "--monitor",
+        choices=("global", "chunk"),
+        default="global",
+        help="which monitor architecture to run",
+    )
     parser.add_argument("--limit", type=int, default=None, help="score only the first N runs")
     parser.add_argument(
         "--calibrate",
@@ -113,14 +119,38 @@ def main() -> int:
         return 1
 
     client = MonitorClient(cfg.model, cache=ResponseCache(enabled=not args.no_cache))
-    monitor = GlobalMonitor(client=client, model=cfg.model, prompt_version=cfg.prompt_version)
+    if args.monitor == "chunk":
+        monitor = ChunkMonitor(
+            client=client,
+            model=cfg.model,
+            chunk=cfg.chunk,
+            aggregation=cfg.aggregation,
+            prompt_version=cfg.prompt_version,
+        )
+    else:
+        monitor = GlobalMonitor(
+            client=client, model=cfg.model, prompt_version=cfg.prompt_version
+        )
 
     if args.dry_run:
+        from monitor_localization.monitors import chunk_count
+
         chars = sum(t.n_characters for t in transcripts)
+        # 4.4 chars/token measured on real MALT transcripts (o200k_base).
+        tokens = int(chars / 4.4)
+        calls = len(transcripts)
+        if args.monitor == "chunk":
+            calls = sum(chunk_count(t, cfg.chunk) for t in transcripts)
         print(f"\nWould score {len(transcripts)} transcripts with {cfg.model.name}")
+        print(f"  monitor: {monitor.name}")
         print(f"  prompt: {monitor.prompt.name} {monitor.prompt.version} "
               f"({monitor.prompt.short_sha})")
-        print(f"  total transcript characters: {chars:,} (~{chars // 4:,} tokens)")
+        print(f"  API calls: {calls:,}")
+        print(f"  transcript characters: {chars:,} (~{tokens:,} tokens)")
+        if args.monitor == "chunk":
+            print(f"  chunking: size={cfg.chunk.size} overlap={cfg.chunk.overlap} "
+                  f"context={cfg.chunk.context_messages} unit={cfg.chunk.unit}")
+            print(f"  aggregation: {cfg.aggregation.method}")
         print(f"  output cap: {cfg.model.max_tokens} tokens/call")
         print(f"  concurrency: {cfg.model.max_concurrency}")
         return 0
@@ -128,7 +158,7 @@ def main() -> int:
     if args.calibrate:
         return calibrate(monitor, transcripts, cap=4096)
 
-    run = ExperimentRun(cfg, stage="global")
+    run = ExperimentRun(cfg, stage=args.monitor)
     run.results_path.unlink(missing_ok=True)
     logger.info("Writing results to %s", run.results_path)
 
