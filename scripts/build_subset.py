@@ -21,6 +21,7 @@ from monitor_localization.dataset import (
     metadata_table,
     save_subset,
 )
+from monitor_localization.dataset.subset import apply_length_cap
 from monitor_localization.paths import EVALUATION_SUBSET
 from monitor_localization.utils import load_env, setup_logging
 
@@ -35,6 +36,11 @@ def main() -> int:
         "--dry-run",
         action="store_true",
         help="report the composition without writing the manifest",
+    )
+    parser.add_argument(
+        "--skip-length-cap",
+        action="store_true",
+        help="skip the transcript-length filter (which requires loading transcripts)",
     )
     args = parser.parse_args()
 
@@ -80,6 +86,15 @@ def main() -> int:
     if args.dry_run:
         print("\n[dry run] manifest not written")
         return 0
+
+    cap = subset_cfg.max_transcript_tokens
+    if cap and not args.skip_length_cap:
+        print(f"\nApplying length cap ({cap:,} tokens) — loading transcripts...")
+        manifest = apply_length_cap(manifest, cap, cfg=cfg.dataset)
+        info = manifest["length_cap"]
+        print(f"  kept {manifest['n_selected']}, excluded {info['n_excluded']}")
+        for family, count in sorted(info["excluded_by_family"].items()):
+            print(f"    {family:<24} {count:>4}")
 
     path = save_subset(manifest, args.output or EVALUATION_SUBSET)
     print(f"\nWrote {path}")

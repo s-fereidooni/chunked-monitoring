@@ -224,6 +224,74 @@ def _manifest(
     }
 
 
+# Chars per token for MALT transcripts, measured with o200k_base (aggregate 4.40).
+_CHARS_PER_TOKEN = 4.4
+
+
+def apply_length_cap(
+    manifest: dict[str, Any],
+    cap_tokens: int,
+    cfg: Any = None,
+) -> dict[str, Any]:
+    """Drop selected runs whose transcript exceeds `cap_tokens`, recording them.
+
+    Requires loading the selected transcripts, so this is the slow part of subset
+    construction. The excluded runs are kept in the manifest with their sizes:
+    they are the runs the global monitor cannot process, which is a result rather
+    than a nuisance, and the write-up needs the exact count per family.
+    """
+    from monitor_localization.dataset.loaders import iter_transcripts
+    from monitor_localization.dataset.schema import BENIGN_LABEL, label_group
+
+    run_ids = list(manifest["run_ids"])
+    kept: list[int] = []
+    excluded: list[dict[str, Any]] = []
+
+    for transcript in iter_transcripts(run_ids, cfg=cfg):
+        tokens = int(len(transcript.render()) / _CHARS_PER_TOKEN)
+        families = sorted(
+            {label_group(x) for x in transcript.labels if x != BENIGN_LABEL}
+        ) or ["benign"]
+        if tokens > cap_tokens:
+            excluded.append(
+                {
+                    "run_id": transcript.run_id,
+                    "tokens": tokens,
+                    "n_messages": transcript.n_messages,
+                    "family": families[0],
+                    "labels": list(transcript.labels),
+                }
+            )
+        else:
+            kept.append(transcript.run_id)
+
+    by_family: dict[str, int] = {}
+    for row in excluded:
+        by_family[row["family"]] = by_family.get(row["family"], 0) + 1
+
+    manifest["run_ids"] = sorted(kept)
+    manifest["n_selected"] = len(kept)
+    manifest["length_cap"] = {
+        "max_transcript_tokens": cap_tokens,
+        "n_excluded": len(excluded),
+        "excluded_by_family": by_family,
+        "reason": (
+            "Exceeds the per-request input budget, so the global monitor cannot "
+            "score the run in a single call. Excluded from the paired comparison; "
+            "reportable as a feasibility difference between architectures."
+        ),
+        "excluded": sorted(excluded, key=lambda r: -r["tokens"]),
+    }
+    logger.info(
+        "Length cap %d tokens: kept %d, excluded %d (%s)",
+        cap_tokens,
+        len(kept),
+        len(excluded),
+        by_family,
+    )
+    return manifest
+
+
 def save_subset(manifest: dict[str, Any], path: str | Path | None = None) -> Path:
     """Write the manifest to `data/evaluation_subset.json` (tracked in git)."""
     return write_json(path or EVALUATION_SUBSET, manifest)

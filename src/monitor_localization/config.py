@@ -59,6 +59,15 @@ class SubsetConfig(StrictModel):
     family_quotas: dict[str, int | Literal["all"]] | None = None
 
     n_samples: int = 500
+    # Inclusion threshold: runs whose rendered transcript exceeds this many
+    # tokens are excluded from the evaluation set. Set at the point where the
+    # global monitor becomes infeasible — a single request above the account's
+    # 400k TPM cap is rejected outright — so the comparison runs only on
+    # transcripts *both* architectures can process. Excluded runs are recorded in
+    # the manifest rather than dropped silently, since "the global monitor cannot
+    # process this at all" is itself a reportable finding.
+    max_transcript_tokens: int | None = 350_000
+
     seed: int = 0
     manually_reviewed_only: bool = True
     stratify_by: list[str] = Field(default_factory=lambda: ["is_positive", "run_source"])
