@@ -68,6 +68,8 @@ def build_subset(
     if pool.empty:
         raise ValueError("No candidate runs after filtering; check manually_reviewed_only.")
 
+    if cfg.label_quotas:
+        return _build_by_label(metadata, pool, cfg, rng)
     if cfg.family_quotas:
         return _build_by_family(metadata, pool, cfg, rng)
 
@@ -122,6 +124,64 @@ def build_subset(
     for message in warnings:
         logger.warning(message)
     return _manifest(metadata, pool, selected, cfg, warnings=warnings)
+
+
+def _build_by_label(
+    metadata: pd.DataFrame,
+    pool: pd.DataFrame,
+    cfg: SubsetConfig,
+    rng: np.random.Generator,
+) -> dict[str, Any]:
+    """Draw a quota per individual behavior label.
+
+    Labels are filled scarcest-first, so a multi-label run is kept by the label
+    that can least afford to lose it. A run already selected for one label is not
+    drawn again for another, which means a label's realised count can fall short
+    of its quota when its runs were claimed by a scarcer label — recorded in
+    `per_label` so the shortfall is visible.
+    """
+    from monitor_localization.dataset.schema import BENIGN_LABEL
+
+    quotas = dict(cfg.label_quotas or {})
+    benign_quota = quotas.pop("benign", 0)
+    warnings: list[str] = []
+
+    pool = pool.copy()
+    pools = {
+        label: pool[pool["labels"].apply(lambda ls, x=label: x in ls)] for label in quotas
+    }
+    order = sorted(quotas, key=lambda x: len(pools[x]))
+
+    selected: list[int] = []
+    per_label: dict[str, int] = {}
+    for label in order:
+        available = pools[label]
+        available = available[~available["run_id"].isin(selected)]
+        quota = quotas[label]
+        want = len(available) if quota == "all" else int(quota)
+        picked = _sample_ids(available, want, rng)
+        if want > len(available):
+            warnings.append(
+                f"Label {label!r}: wanted {want} but only {len(available)} available."
+            )
+        per_label[label] = len(picked)
+        selected.extend(picked)
+
+    benign_pool = pool[pool["labels"].apply(lambda ls: all(x == BENIGN_LABEL for x in ls))]
+    want_benign = len(benign_pool) if benign_quota == "all" else int(benign_quota)
+    picked_benign = _sample_ids(benign_pool, want_benign, rng)
+    if want_benign > len(benign_pool):
+        warnings.append(
+            f"Benign: wanted {want_benign} but only {len(benign_pool)} available."
+        )
+    per_label["benign"] = len(picked_benign)
+    selected.extend(picked_benign)
+
+    for message in warnings:
+        logger.warning(message)
+    manifest = _manifest(metadata, pool, sorted(selected), cfg, warnings=warnings)
+    manifest["composition"]["by_label"] = per_label
+    return manifest
 
 
 def _families(labels: list[str]) -> set[str]:

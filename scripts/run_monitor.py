@@ -129,7 +129,8 @@ def main() -> int:
         )
     else:
         monitor = GlobalMonitor(
-            client=client, model=cfg.model, prompt_version=cfg.prompt_version
+            client=client, model=cfg.model, prompt_version=cfg.prompt_version,
+            target=cfg.monitor_target,
         )
 
     if args.dry_run:

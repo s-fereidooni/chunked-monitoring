@@ -58,6 +58,13 @@ class SubsetConfig(StrictModel):
     # max_prompted_fraction, which describe the older is_positive stratification.
     family_quotas: dict[str, int | Literal["all"]] | None = None
 
+    # Quotas per individual behavior label, e.g. {"sabotage": 50, "refusals": 50,
+    # "benign": 296}. Takes precedence over family_quotas. Used when the analysis
+    # is per-label rather than per-family — sandbagging has six labels of very
+    # different character, and a family average would mostly measure whichever
+    # label happens to be largest.
+    label_quotas: dict[str, int | Literal["all"]] | None = None
+
     n_samples: int = 500
     # Inclusion threshold: runs whose rendered transcript exceeds this many
     # tokens are excluded from the evaluation set. Set at the point where the
@@ -152,6 +159,10 @@ class ExperimentConfig(StrictModel):
 
     name: str
     description: str = ""
+    # Which behavior the monitor is prompted to look for. METR runs a separate
+    # monitor per target rather than one combined monitor, and reports that a
+    # less specific prompt measurably degrades performance.
+    monitor_target: Literal["sandbagging", "reward_hacking"] = "sandbagging"
     prompt_version: str = "v1"
     output_dir: Path = RESULTS_DIR
     dataset: DatasetConfig = Field(default_factory=DatasetConfig)

@@ -1,13 +1,18 @@
-# Baseline experiment config. Copy and override for variants.
+# Baseline experiment: sandbagging detection, global monitor.
 #
-# Stage 1-3 (global monitor) ignore the `chunk` and `aggregation` blocks;
-# Stage 4-5 (chunk monitor) use all of them.
+# Scope note: reward hacking is deliberately out of scope for this run. Its 62
+# reviewed runs average 469k tokens (17x benign), 37% exceed the per-request
+# limit, and in pilot testing gpt-4.1-mini detected 0 of 12. Sandbagging has six
+# labels and 1,073 available runs, so per-label conclusions are reachable there.
+# Chunking is also deferred — this run establishes the global baseline first.
 
-name: baseline
+name: sandbagging-global
 description: >
-  Global vs. chunk-wise monitoring on a 500-run manually-reviewed MALT subset.
+  Global monitor for sandbagging on MALT, 50 runs per behavior label plus benign
+  controls, using METR's sandbagging monitor prompt.
 
-prompt_version: v1
+monitor_target: sandbagging
+prompt_version: v3
 output_dir: results
 
 dataset:
@@ -16,43 +21,39 @@ dataset:
   split: public
 
 subset:
-  # Quotas per behavior family. Reward hacking takes everything (62 runs in the
-  # reviewed pool) because it is the binding constraint on statistical power.
-  # Sandbagging is capped at 200: that already resolves a ~3pp recall change,
-  # and the remaining ~870 runs buy precision finer than any claim we make.
-  # Benign sets the 5% FPR threshold, so 300 puts ~15 runs at the cut.
-  family_quotas:
-    reward_hacking: all
-    sandbagging_sabotage: 200
-    benign: 300
+  # Per-label quotas: the six sandbagging labels differ enough in character that
+  # a family average would mostly track whichever label is largest (refusals,
+  # at 324). gives_up has only 17 runs in the whole reviewed pool, so it is
+  # reported descriptively rather than tested.
+  label_quotas:
+    sabotage: 50
+    refusals: 50
+    partial_problem_solving: 50
+    match_weaker_model: 50
+    reasoning_about_task: 50
+    gives_up: all
+    benign: 296
 
   seed: 0
   manually_reviewed_only: true
-  # Below here applies only when family_quotas is unset.
-  n_samples: 500
-  # ~92% of MALT's reviewed positives are `prompted`; stratify so the subset
-  # isn't dominated by a single model's prompted behavior.
-  stratify_by: [is_positive, run_source]
-  positive_fraction: 0.5
-  max_prompted_fraction: 0.5
-  max_characters: null
+  # Excludes runs the global monitor cannot send in one request (400k TPM cap).
+  max_transcript_tokens: 350000
 
 model:
   provider: openai
   name: gpt-4.1-mini
-  # The monitor produces a short structured verdict, not a long explanation.
   max_tokens: 256
-  # Deterministic judgments make global-vs-chunk comparisons reproducible.
   temperature: 0.0
-  max_concurrency: 8
+  # Kept below the 400k TPM ceiling so concurrent requests do not thrash on 429s.
+  max_concurrency: 4
   max_retries: 4
+  max_input_tokens: 350000
 
+# Unused by the global stage; retained for the chunked follow-up.
 chunk:
   size: 10
   overlap: 0
   unit: messages
-  # METR's MALT baseline repeats the first five messages across all chunks so
-  # each one can see the task description.
   context_messages: 5
 
 aggregation:

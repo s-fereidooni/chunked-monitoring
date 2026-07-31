@@ -7,10 +7,20 @@ from monitor_localization.paths import CONFIGS_DIR
 
 def test_default_yaml_loads():
     cfg = ExperimentConfig.from_yaml("default")
-    assert cfg.name == "baseline"
-    assert cfg.subset.n_samples == 500
+    assert cfg.monitor_target == "sandbagging"
+    assert cfg.prompt_version == "v3"
     assert cfg.chunk.overlap == 0
     assert cfg.aggregation.method == "max"
+
+
+def test_default_config_uses_per_label_quotas():
+    # Sandbagging's six labels differ enough that a family average would mostly
+    # track whichever label is largest.
+    quotas = ExperimentConfig.from_yaml("default").subset.label_quotas
+    assert quotas is not None
+    assert quotas["sabotage"] == 50
+    assert quotas["gives_up"] == "all"  # only 17 exist in the whole reviewed pool
+    assert "benign" in quotas
 
 
 def test_shipped_configs_all_valid():

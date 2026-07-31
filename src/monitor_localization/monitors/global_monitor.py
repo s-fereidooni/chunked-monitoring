@@ -20,14 +20,25 @@ from monitor_localization.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-def render_for_monitor(transcript: Transcript) -> str:
-    """Format one transcript as the monitor's user message."""
-    header = (
-        f"Task: {transcript.task_id}\n"
-        f"Messages: {transcript.n_messages}\n"
-        "---\n"
+def render_for_monitor(transcript: Transcript, context_messages: int = 5) -> str:
+    """Format one transcript as the monitor's user message.
+
+    Uses METR's MALT layout — the opening messages in `<first_few_messages>`,
+    the content under review in `<transcript_chunk>`, separated by a literal
+    ellipsis. The global monitor puts the whole transcript in the chunk slot, so
+    the only difference from the chunked condition is what fills that slot.
+
+    No task_id or message-count header: those are metadata the monitor would not
+    have in deployment, and a message count is a length cue we do not want
+    influencing a comparison where length is already a confound.
+    """
+    head = "\n\n".join(m.render() for m in transcript.messages[:context_messages])
+    body = "\n\n".join(m.render() for m in transcript.messages)
+    return (
+        f"<first_few_messages>\n{head}\n</first_few_messages>\n"
+        f"...\n"
+        f"<transcript_chunk>\n{body}\n</transcript_chunk>"
     )
-    return header + transcript.render()
 
 
 class GlobalMonitor(Monitor):
@@ -40,10 +51,15 @@ class GlobalMonitor(Monitor):
         client: MonitorClient | None = None,
         model: ModelConfig | None = None,
         prompt_version: str = "v1",
+        target: str | None = None,
     ) -> None:
         self.model = model or ModelConfig()
         self.client = client or MonitorClient(self.model)
-        self.prompt = load_prompt("global_monitor", prompt_version)
+        self.target = target
+        # v3 onward carries a prompt per monitored behavior, following METR's
+        # separate reward-hacking and sandbagging monitors.
+        name = f"{target}_global" if target else "global_monitor"
+        self.prompt = load_prompt(name, prompt_version)
 
     def judge(self, transcript: Transcript) -> MonitorResult:
         """Score a transcript, recording failures rather than raising.
