@@ -45,8 +45,8 @@ model:
   max_tokens: 256
   temperature: 0.0
   # Kept below the 400k TPM ceiling so concurrent requests do not thrash on 429s.
-  max_concurrency: 4
-  max_retries: 4
+  max_concurrency: 2
+  max_retries: 8
   max_input_tokens: 350000
 
 # Unused by the global stage; retained for the chunked follow-up.
