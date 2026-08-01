@@ -33,6 +33,7 @@ from monitor_localization.evaluation import (
     length_effect_by_arm,
     mcnemar,
     pair_results,
+    recall_by_aggregation,
     recovery_by_draws,
     recovery_by_length,
     recovery_within_label_by_length,
@@ -171,6 +172,23 @@ def main() -> int:
         print("  Read the slope alongside rho — a significant rho on a slope of a")
         print("  point or two per decade does not move a decision made at 50.")
 
+    # --- localization vs draw count, via offline re-aggregation --------------
+    chunk_scores = {
+        r["run_id"]: [s for s in (r.get("metadata") or {}).get("chunk_scores") or []]
+        for r in variant
+    }
+    aggregation = recall_by_aggregation(paired, chunk_scores, threshold=args.threshold)
+    _section(f"Recall @ {args.threshold:g} by aggregation rule")
+    if aggregation.empty:
+        print("  No per-chunk scores recorded.")
+    else:
+        print(aggregation.to_string(index=False))
+        print("\n  `mean` cannot benefit from more draws — averaging over more")
+        print("  chunks dilutes rather than inflates. So a label that still gains")
+        print("  under mean gained for some reason other than draw count, and a")
+        print("  label whose gain vanishes under mean was carried entirely by max,")
+        print("  which is the signature of evidence concentrated in a few chunks.")
+
     # --- is the gain only a long-transcript effect? --------------------------
     draws = recovery_by_draws(paired, threshold=args.threshold)
     _section("Recovery by draw count (positives)")
@@ -239,6 +257,7 @@ def main() -> int:
     transitions.to_csv(out / "transitions.csv", index=False)
     lengths.to_csv(out / "delta_vs_length.csv", index=False)
     by_arm.to_csv(out / "length_effect_by_arm.csv", index=False)
+    aggregation.to_csv(out / "recall_by_aggregation.csv", index=False)
     draws.to_csv(out / "recovery_by_draws.csv", index=False)
     by_length.to_csv(out / "recovery_by_length.csv", index=False)
     composition.to_csv(out / "label_composition_by_length.csv", index=False)
@@ -251,6 +270,7 @@ def main() -> int:
         "transitions.csv",
         "delta_vs_length.csv",
         "length_effect_by_arm.csv",
+        "recall_by_aggregation.csv",
         "recovery_by_draws.csv",
         "recovery_by_length.csv",
         "label_composition_by_length.csv",

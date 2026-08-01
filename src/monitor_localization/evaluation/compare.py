@@ -403,6 +403,59 @@ def recovery_within_label_by_length(
     return pd.DataFrame(rows)
 
 
+def recall_by_aggregation(
+    paired: pd.DataFrame,
+    chunk_scores: dict[int, list[float]],
+    threshold: float = DEFAULT_THRESHOLD,
+    min_runs: int = 15,
+) -> pd.DataFrame:
+    """Per-label recall under each aggregation rule, against the global baseline.
+
+    Free to compute: every chunk verdict is retained on the result, so
+    alternative rules are re-derived without new inference.
+
+    `mean` is the diagnostically important one. It cannot benefit from taking
+    more draws — averaging over more chunks dilutes a score rather than inflating
+    it — so a label that still gains under mean has gained for some reason other
+    than draw count. A label whose gain vanishes under mean was carried entirely
+    by max, which is the signature of evidence concentrated in a few chunks.
+    """
+    frame = paired.copy()
+    for rule in ("max", "mean"):
+        frame[f"agg_{rule}"] = [
+            _aggregate(chunk_scores.get(run_id, []), rule) for run_id in frame["run_id"]
+        ]
+    exploded = _explode_labels(frame)
+
+    rows: list[dict[str, Any]] = []
+    for label, group in exploded.groupby("label_list"):
+        positives = group[group["is_positive"]]
+        target = positives if not positives.empty else group
+        if len(target) < min_runs:
+            continue
+        rows.append(
+            {
+                "label": label,
+                "n": len(target),
+                "is_positive": bool(not positives.empty),
+                "global": round(float((target["score_baseline"] >= threshold).mean()), 3),
+                "chunk_max": round(float((target["agg_max"] >= threshold).mean()), 3),
+                "chunk_mean": round(float((target["agg_mean"] >= threshold).mean()), 3),
+            }
+        )
+    columns = ["label", "n", "is_positive", "global", "chunk_max", "chunk_mean"]
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows).sort_values("chunk_max", ascending=False)
+
+
+def _aggregate(scores: list[float], rule: str) -> float:
+    usable = [s for s in scores if s == s]
+    if not usable:
+        return float("nan")
+    return max(usable) if rule == "max" else float(np.mean(usable))
+
+
 def transition_counts(paired: pd.DataFrame) -> pd.DataFrame:
     """Per-label transition table — the recovery analysis the notes call for."""
     frame = paired.copy()
