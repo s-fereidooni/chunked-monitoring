@@ -29,9 +29,12 @@ from monitor_localization.evaluation import (
     false_negatives,
     false_positives,
     format_failure_digest,
+    fpr_by_length_decile,
+    length_by_label,
     per_sample_table,
     recall_by,
     recall_by_label,
+    score_vs_length,
 )
 from monitor_localization.experiment import ExperimentRun
 from monitor_localization.utils import read_jsonl, setup_logging, write_json
@@ -115,6 +118,32 @@ def main() -> int:
         print("\n  Natural runs are the realistic signal; prompted runs are easier.")
         print("  A large gap here means headline recall is flattered by prompted runs.")
 
+    # --- length controls -----------------------------------------------------
+    lengths = length_by_label(table)
+    if not lengths.empty:
+        _section("Transcript length by label (tokens)")
+        print(lengths.to_string(index=False))
+        print("\n  `spread` is p90/p10 — how much length varies WITHIN the label.")
+        print("  Length is confounded with label, so a label's AUROC is partly a")
+        print("  function of its length distribution. Labels with low spread cannot")
+        print("  separate the two.")
+
+    correlations = score_vs_length(table)
+    if not correlations.empty:
+        _section("Within-label: does length predict the score?")
+        print(correlations.to_string(index=False))
+        benign_row = correlations[correlations["label"] == "normal"]
+        if not benign_row.empty and float(benign_row.iloc[0]["rho"]) > 0:
+            print("\n  Positive rho on benign runs means the monitor grows more")
+            print("  suspicious of longer transcripts regardless of behavior — a")
+            print("  false-positive tendency that max aggregation over more chunks")
+            print("  would amplify.")
+
+    fpr_deciles = fpr_by_length_decile(table, threshold=args.threshold)
+    if not fpr_deciles.empty:
+        _section("False-positive rate by length decile (benign only)")
+        print(fpr_deciles.to_string(index=False))
+
     print(format_failure_digest(table, n=args.top))
 
     out = results_path.parent
@@ -123,6 +152,9 @@ def main() -> int:
     false_negatives(table).to_csv(out / "false_negatives.csv", index=False)
     false_positives(table).to_csv(out / "false_positives.csv", index=False)
     by_label.to_csv(out / "recall_by_label.csv", index=False)
+    lengths.to_csv(out / "length_by_label.csv", index=False)
+    correlations.to_csv(out / "score_vs_length.csv", index=False)
+    fpr_deciles.to_csv(out / "fpr_by_length_decile.csv", index=False)
 
     failed = errors(table)
     if not failed.empty:

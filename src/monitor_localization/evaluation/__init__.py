@@ -1,5 +1,15 @@
 """Stage 3 evaluation: metrics and failure-mode inspection."""
 
+from monitor_localization.evaluation.compare import (
+    BOTH_CAUGHT,
+    BOTH_MISSED,
+    LOST,
+    RECOVERED,
+    delta_vs_length,
+    mcnemar,
+    pair_results,
+    transition_counts,
+)
 from monitor_localization.evaluation.failures import (
     FAILED,
     FALSE_NEGATIVE,
@@ -15,6 +25,12 @@ from monitor_localization.evaluation.failures import (
     recall_by,
     recall_by_label,
 )
+from monitor_localization.evaluation.length import (
+    add_length_columns,
+    fpr_by_length_decile,
+    length_by_label,
+    score_vs_length,
+)
 from monitor_localization.evaluation.metrics import (
     DEFAULT_TARGET_FPR,
     DEFAULT_THRESHOLD,
@@ -28,6 +44,18 @@ from monitor_localization.evaluation.metrics import (
 )
 
 __all__ = [
+    "BOTH_CAUGHT",
+    "BOTH_MISSED",
+    "LOST",
+    "RECOVERED",
+    "add_length_columns",
+    "delta_vs_length",
+    "fpr_by_length_decile",
+    "length_by_label",
+    "mcnemar",
+    "pair_results",
+    "score_vs_length",
+    "transition_counts",
     "DEFAULT_TARGET_FPR",
     "DEFAULT_THRESHOLD",
     "FAILED",
