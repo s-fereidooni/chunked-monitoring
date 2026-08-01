@@ -121,7 +121,9 @@ def mcnemar(paired: pd.DataFrame) -> dict[str, Any]:
         "lost": lost,
         "discordant": discordant,
         "net": recovered - lost,
-        "p_value": round(p_value, 4),
+        # Not rounded: a strongly significant result rounds to 0.0 at 4dp, which
+        # reads as a missing value. Formatting is the caller's job.
+        "p_value": p_value,
         "recall_baseline": round(
             float((positives["outcome_baseline"] == TRUE_POSITIVE).mean()), 4
         ),
