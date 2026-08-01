@@ -8,13 +8,16 @@ cache is keyed on the request, resuming re-reads those calls for free.
     python scripts/run_monitor.py --limit 5        # smoke test
     python scripts/run_monitor.py --calibrate 20   # size max_tokens from data
     python scripts/run_monitor.py                  # full subset
+    python scripts/run_monitor.py --resume         # score only what is missing
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import statistics
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 from monitor_localization.config import ExperimentConfig
 from monitor_localization.dataset import (
@@ -71,6 +74,28 @@ def calibrate(monitor: GlobalMonitor, transcripts: list, cap: int) -> int:
     return 0
 
 
+def scored_run_ids(path: Path) -> set[int]:
+    """Run ids already present in a results file, excluding failed rows.
+
+    A failed row is missing data, not a result, so resuming retries it. Rows are
+    read defensively: an interrupted append can leave a partial final line.
+    """
+    if not path.exists():
+        return set()
+    done: set[int] = set()
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            logger.warning("skipping malformed line in %s", path)
+            continue
+        if not row.get("error"):
+            done.add(row["run_id"])
+    return done
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="default")
@@ -87,6 +112,11 @@ def main() -> int:
         metavar="N",
         default=None,
         help="measure completion-token usage on N runs instead of scoring the subset",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="append to an existing results file, scoring only the runs missing from it",
     )
     parser.add_argument("--no-cache", action="store_true")
     parser.add_argument("--dry-run", action="store_true", help="report the plan, make no calls")
@@ -106,6 +136,19 @@ def main() -> int:
         run_ids = run_ids[: args.limit]
     if args.calibrate:
         run_ids = run_ids[: args.calibrate]
+
+    run = ExperimentRun(cfg, stage=args.monitor)
+    all_run_ids = list(run_ids)
+    already_scored: set[int] = set()
+    if args.resume:
+        already_scored = scored_run_ids(run.results_path)
+        run_ids = [i for i in run_ids if i not in already_scored]
+        logger.info(
+            "Resuming: %d already scored, %d to go", len(already_scored), len(run_ids)
+        )
+        if not run_ids:
+            print(f"Nothing to resume — all {len(already_scored)} runs are scored.")
+            return 0
 
     logger.info("Loading %d transcripts", len(run_ids))
     try:
@@ -160,8 +203,8 @@ def main() -> int:
     if args.calibrate:
         return calibrate(monitor, transcripts, cap=4096)
 
-    run = ExperimentRun(cfg, stage=args.monitor)
-    run.results_path.unlink(missing_ok=True)
+    if not args.resume:
+        run.results_path.unlink(missing_ok=True)
     logger.info("Writing results to %s", run.results_path)
 
     failures = 0
@@ -175,16 +218,23 @@ def main() -> int:
             if done % 25 == 0 or done == len(transcripts):
                 logger.info("%d/%d scored (%d failed)", done, len(transcripts), failures)
 
+    # On a resume the manifest describes the whole results file, not just this
+    # invocation — usage and cache stats are per-invocation and labelled as such.
+    scored_total = len(scored_run_ids(run.results_path))
     run.write_manifest(
         monitor=monitor.describe(),
-        n_transcripts=len(transcripts),
+        n_transcripts=scored_total,
         n_failures=failures,
+        resumed=args.resume,
+        n_scored_this_invocation=len(transcripts) - failures,
         usage=client.usage.as_dict(),
         cache=client.cache.stats,
-        run_ids=run_ids,
+        run_ids=all_run_ids,
     )
 
     print(f"\nScored {len(transcripts) - failures}/{len(transcripts)} transcripts")
+    if args.resume:
+        print(f"  results file now holds {scored_total}/{len(all_run_ids)} runs")
     if failures:
         print(f"  {failures} failed — see the `error` field in results.jsonl")
     print(f"  usage: {client.usage.as_dict()}")
