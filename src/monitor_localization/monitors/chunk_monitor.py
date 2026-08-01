@@ -39,12 +39,15 @@ class ChunkMonitor(Monitor):
         chunk: ChunkConfig | None = None,
         aggregation: AggregationConfig | None = None,
         prompt_version: str = "v1",
+        target: str | None = None,
     ) -> None:
         self.model = model or ModelConfig()
         self.chunk_cfg = chunk or ChunkConfig()
         self.aggregation_cfg = aggregation or AggregationConfig()
         self.client = client or MonitorClient(self.model)
-        self.prompt = load_prompt("chunk_monitor", prompt_version)
+        self.target = target
+        name = f"{target}_chunk" if target else "chunk_monitor"
+        self.prompt = load_prompt(name, prompt_version)
 
     def judge(self, transcript: Transcript) -> MonitorResult:
         """Score every chunk, then aggregate.

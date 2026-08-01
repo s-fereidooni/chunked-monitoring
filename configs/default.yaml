@@ -51,7 +51,7 @@ model:
 
 # Unused by the global stage; retained for the chunked follow-up.
 chunk:
-  size: 10
+  size: 20
   overlap: 0
   unit: messages
   context_messages: 5

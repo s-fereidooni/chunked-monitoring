@@ -104,17 +104,19 @@ def test_context_can_be_disabled():
 def test_render_separates_context_from_excerpt():
     chunks = split_transcript(transcript(30), ChunkConfig(size=10, context_messages=5))
     rendered = chunks[1].render()
-    assert "CONTEXT" in rendered
-    assert "do not score" in rendered
-    assert "EXCERPT" in rendered
-    assert "score this" in rendered
-    # The excerpt's own range is stated so the monitor knows what it is judging.
-    assert "messages 10-19" in rendered
+    # METR's layout, identical in structure to the global condition so the only
+    # difference between arms is what fills <transcript_chunk>.
+    assert "<first_few_messages>" in rendered
+    assert "<transcript_chunk>" in rendered
+    assert "m0" in rendered   # repeated opening context
+    assert "m10" in rendered  # the excerpt itself
+    # No message indices: that would be a position cue the global monitor lacks.
+    assert "messages 10-19" not in rendered
 
 
 def test_render_without_context_has_no_context_block():
     chunks = split_transcript(transcript(8), ChunkConfig(size=10, context_messages=5))
-    assert "CONTEXT" not in chunks[0].render()
+    assert chunks[0].context == []
 
 
 # --- character chunking -----------------------------------------------------
@@ -262,9 +264,9 @@ def test_chunk_monitor_handles_empty_transcript(tmp_path):
 
 def test_chunk_monitor_sends_the_chunk_prompt_not_the_global_one(tmp_path):
     client, completions = make_client(tmp_path)
-    ChunkMonitor(client=client).judge(transcript(12))
+    ChunkMonitor(client=client, prompt_version="v3", target="sandbagging").judge(transcript(12))
     system = completions.calls[0]["messages"][0]["content"].lower()
-    assert "excerpt" in system
+    assert "a part of a transcript" in system
 
 
 def test_describe_records_chunk_and_aggregation_config(tmp_path):

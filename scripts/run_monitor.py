@@ -126,6 +126,7 @@ def main() -> int:
             chunk=cfg.chunk,
             aggregation=cfg.aggregation,
             prompt_version=cfg.prompt_version,
+            target=cfg.monitor_target,
         )
     else:
         monitor = GlobalMonitor(
