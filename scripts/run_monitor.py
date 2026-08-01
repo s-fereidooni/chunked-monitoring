@@ -74,26 +74,38 @@ def calibrate(monitor: GlobalMonitor, transcripts: list, cap: int) -> int:
     return 0
 
 
-def scored_run_ids(path: Path) -> set[int]:
-    """Run ids already present in a results file, excluding failed rows.
+def read_results(path: Path) -> list[dict]:
+    """Rows of a results file, tolerating a partial final line.
 
-    A failed row is missing data, not a result, so resuming retries it. Rows are
-    read defensively: an interrupted append can leave a partial final line.
+    An interrupted append can leave the file ending mid-object; that line is
+    dropped rather than aborting the resume.
     """
     if not path.exists():
-        return set()
-    done: set[int] = set()
+        return []
+    rows: list[dict] = []
     for line in path.read_text().splitlines():
         if not line.strip():
             continue
         try:
-            row = json.loads(line)
+            rows.append(json.loads(line))
         except json.JSONDecodeError:
             logger.warning("skipping malformed line in %s", path)
-            continue
-        if not row.get("error"):
-            done.add(row["run_id"])
-    return done
+    return rows
+
+
+def prune_failed(path: Path) -> set[int]:
+    """Drop failed rows from a results file; return the run ids that remain.
+
+    A failed row is missing data, not a result, so resuming retries it — and the
+    stale row has to go, or the retried run would appear twice and downstream
+    analysis would see a phantom failure alongside its own success.
+    """
+    rows = read_results(path)
+    kept = [r for r in rows if not r.get("error")]
+    if len(kept) != len(rows):
+        logger.info("dropping %d failed rows before resuming", len(rows) - len(kept))
+        path.write_text("".join(json.dumps(r) + "\n" for r in kept))
+    return {r["run_id"] for r in kept}
 
 
 def main() -> int:
@@ -141,7 +153,7 @@ def main() -> int:
     all_run_ids = list(run_ids)
     already_scored: set[int] = set()
     if args.resume:
-        already_scored = scored_run_ids(run.results_path)
+        already_scored = prune_failed(run.results_path)
         run_ids = [i for i in run_ids if i not in already_scored]
         logger.info(
             "Resuming: %d already scored, %d to go", len(already_scored), len(run_ids)
@@ -220,7 +232,7 @@ def main() -> int:
 
     # On a resume the manifest describes the whole results file, not just this
     # invocation — usage and cache stats are per-invocation and labelled as such.
-    scored_total = len(scored_run_ids(run.results_path))
+    scored_total = sum(1 for r in read_results(run.results_path) if not r.get("error"))
     run.write_manifest(
         monitor=monitor.describe(),
         n_transcripts=scored_total,
