@@ -29,9 +29,13 @@ from monitor_localization.evaluation import (
     RECOVERED,
     delta_vs_length,
     evaluate,
+    label_composition_by_length,
     length_effect_by_arm,
     mcnemar,
     pair_results,
+    recovery_by_draws,
+    recovery_by_length,
+    recovery_within_label_by_length,
     transition_counts,
 )
 from monitor_localization.experiment import ExperimentRun
@@ -167,6 +171,40 @@ def main() -> int:
         print("  Read the slope alongside rho — a significant rho on a slope of a")
         print("  point or two per decade does not move a decision made at 50.")
 
+    # --- is the gain only a long-transcript effect? --------------------------
+    draws = recovery_by_draws(paired, threshold=args.threshold)
+    _section("Recovery by draw count (positives)")
+    if draws.empty:
+        print("  No chunk counts recorded.")
+    else:
+        print(draws.to_string(index=False))
+        print("\n  n_chunks=1 is the closest thing to a pure control: the chunked")
+        print("  monitor sees the same content in one call, with no extra draws.")
+
+    by_length = recovery_by_length(paired, threshold=args.threshold)
+    _section("Recovery by pooled length quartile (positives) — CONFOUNDED")
+    if by_length.empty:
+        print("  Not enough positives to quartile.")
+    else:
+        print(by_length.to_string(index=False))
+
+    composition = label_composition_by_length(paired)
+    if not composition.empty:
+        _section("...because the quartiles hold different behaviors")
+        print(composition.to_string(index=False))
+        print("\n  Length is confounded with label in MALT, so a gradient across")
+        print("  pooled quartiles compares behaviors, not lengths. Use the")
+        print("  within-label split below instead.")
+
+    within = recovery_within_label_by_length(paired, threshold=args.threshold)
+    _section("Recovery within each label's own short/long half — DECONFOUNDED")
+    if within.empty:
+        print("  No label has enough positives to split.")
+    else:
+        print(within.to_string(index=False))
+        print("\n  Behavior is held fixed here, so a gain in the `short` half is")
+        print("  evidence the benefit is not merely a long-transcript effect.")
+
     _section(f"Recoveries (top {args.top} by delta)")
     recovered = paired[paired["transition"] == RECOVERED].nlargest(args.top, "delta")
     for _, row in recovered.iterrows():
@@ -201,6 +239,10 @@ def main() -> int:
     transitions.to_csv(out / "transitions.csv", index=False)
     lengths.to_csv(out / "delta_vs_length.csv", index=False)
     by_arm.to_csv(out / "length_effect_by_arm.csv", index=False)
+    draws.to_csv(out / "recovery_by_draws.csv", index=False)
+    by_length.to_csv(out / "recovery_by_length.csv", index=False)
+    composition.to_csv(out / "label_composition_by_length.csv", index=False)
+    within.to_csv(out / "recovery_within_label.csv", index=False)
 
     _section("Written")
     for name in (
@@ -209,6 +251,10 @@ def main() -> int:
         "transitions.csv",
         "delta_vs_length.csv",
         "length_effect_by_arm.csv",
+        "recovery_by_draws.csv",
+        "recovery_by_length.csv",
+        "label_composition_by_length.csv",
+        "recovery_within_label.csv",
     ):
         print(f"  {out / name}")
     return 0

@@ -56,6 +56,9 @@ def pair_results(
                     ),
                     f"error_{suffix}": r.get("error"),
                     f"reasoning_{suffix}": r.get("reasoning", ""),
+                    # Only the chunked arm sets this; it is the draw count that
+                    # the "chunking just takes more maxima" explanation rests on.
+                    f"n_chunks_{suffix}": (r.get("metadata") or {}).get("n_chunks"),
                     "is_positive": bool(r.get("is_positive")),
                     "labels": ";".join(r.get("labels") or []),
                     "n_characters": (r.get("metadata") or {}).get("n_characters"),
@@ -186,7 +189,8 @@ def _explode_labels(paired: pd.DataFrame) -> pd.DataFrame:
     frame["label_list"] = frame["labels"].apply(
         lambda s: [x for x in str(s).split(";") if x and x != "normal"] or ["benign"]
     )
-    return frame.explode("label_list")
+    # Reset the index: explode repeats it, and duplicate labels break crosstab.
+    return frame.explode("label_list").reset_index(drop=True)
 
 
 def length_effect_by_arm(paired: pd.DataFrame, min_runs: int = 15) -> pd.DataFrame:
@@ -255,6 +259,148 @@ def length_effect_by_arm(paired: pd.DataFrame, min_runs: int = 15) -> pd.DataFra
     if not rows:
         return pd.DataFrame(columns=columns)
     return pd.DataFrame(rows).sort_values("rho_delta", ascending=False)
+
+
+def _recovery_stats(group: pd.DataFrame, threshold: float) -> dict[str, Any]:
+    """Both arms' recall on one stratum, plus McNemar over its discordant pairs."""
+    from scipy import stats
+
+    recovered = int((group["transition"] == RECOVERED).sum())
+    lost = int((group["transition"] == LOST).sum())
+    discordant = recovered + lost
+    return {
+        "n": len(group),
+        "recall_global": round(float((group["score_baseline"] >= threshold).mean()), 3),
+        "recall_chunk": round(float((group["score_variant"] >= threshold).mean()), 3),
+        "recovered": recovered,
+        "lost": lost,
+        "p": (
+            float(stats.binomtest(recovered, discordant, 0.5).pvalue)
+            if discordant
+            else 1.0
+        ),
+    }
+
+
+def recovery_by_draws(
+    paired: pd.DataFrame,
+    threshold: float = DEFAULT_THRESHOLD,
+) -> pd.DataFrame:
+    """Recovery on positives, bucketed by how many chunks the transcript produced.
+
+    The draw count is the quantity the "more maxima" explanation depends on, so
+    bucketing by it tests that explanation directly. A transcript yielding a
+    single chunk is shown to the chunked monitor in one call over the same
+    content the global monitor saw — no extra draws at all — so that bucket is
+    the closest thing in the data to a pure prompt-difference control.
+    """
+    positives = paired[paired["is_positive"]].copy()
+    if positives.empty or "n_chunks_variant" not in positives:
+        return pd.DataFrame()
+
+    buckets = [(1, 1), (2, 2), (3, 4), (5, 9), (10, 10**6)]
+    rows: list[dict[str, Any]] = []
+    for low, high in buckets:
+        group = positives[
+            positives["n_chunks_variant"].between(low, high)
+        ]
+        if group.empty:
+            continue
+        label = str(low) if low == high else (f"{low}+" if high > 10**5 else f"{low}-{high}")
+        rows.append(
+            {
+                "n_chunks": label,
+                **_recovery_stats(group, threshold),
+                "median_tokens": round(float(group["tokens"].median())),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def label_composition_by_length(paired: pd.DataFrame, quartiles: int = 4) -> pd.DataFrame:
+    """Which labels populate each length quartile, on positives.
+
+    Length is confounded with label in MALT, so a pooled length stratification
+    compares different behaviors rather than the same behavior at different
+    lengths. This table is what makes that visible: read it before drawing any
+    conclusion from `recovery_by_length`.
+    """
+    positives = paired[paired["is_positive"]].copy()
+    if len(positives) < quartiles:
+        return pd.DataFrame()
+    positives["quartile"] = pd.qcut(
+        positives["tokens"], quartiles, labels=[f"Q{i + 1}" for i in range(quartiles)]
+    )
+    exploded = _explode_labels(positives)
+    table = pd.crosstab(exploded["label_list"], exploded["quartile"])
+    table.index.name = "label"
+    return table.reset_index()
+
+
+def recovery_by_length(
+    paired: pd.DataFrame,
+    threshold: float = DEFAULT_THRESHOLD,
+    quartiles: int = 4,
+) -> pd.DataFrame:
+    """Recovery on positives by pooled length quartile.
+
+    Reports the confounded view deliberately, because it is the view most
+    readers will reach for. It must be read against `label_composition_by_length`
+    and `recovery_within_label_by_length` — pooled quartiles differ in which
+    behaviors they contain, so a length gradient here is not evidence that
+    length is what matters.
+    """
+    positives = paired[paired["is_positive"]].copy()
+    if len(positives) < quartiles:
+        return pd.DataFrame()
+    positives["quartile"] = pd.qcut(
+        positives["tokens"], quartiles, labels=[f"Q{i + 1}" for i in range(quartiles)]
+    )
+    rows = [
+        {
+            "quartile": str(quartile),
+            **_recovery_stats(group, threshold),
+            "median_tokens": round(float(group["tokens"].median())),
+        }
+        for quartile, group in positives.groupby("quartile", observed=True)
+    ]
+    return pd.DataFrame(rows)
+
+
+def recovery_within_label_by_length(
+    paired: pd.DataFrame,
+    threshold: float = DEFAULT_THRESHOLD,
+    min_runs: int = 20,
+) -> pd.DataFrame:
+    """Recovery in each label's own short and long half — the deconfounded test.
+
+    Splitting inside a label holds behavior fixed, so any difference between the
+    halves is length rather than label composition. If chunking only worked
+    because transcripts were long, the short halves would show no gain.
+    """
+    positives = paired[paired["is_positive"]].copy()
+    if positives.empty:
+        return pd.DataFrame()
+    exploded = _explode_labels(positives)
+
+    rows: list[dict[str, Any]] = []
+    for label, group in exploded.groupby("label_list"):
+        group = group[group["tokens"].notna()]
+        if len(group) < min_runs:
+            continue
+        median = group["tokens"].median()
+        for half, subset in (
+            ("short", group[group["tokens"] <= median]),
+            ("long", group[group["tokens"] > median]),
+        ):
+            if subset.empty:
+                continue
+            row = {"label": label, "half": half, **_recovery_stats(subset, threshold)}
+            row["median_tokens"] = round(float(subset["tokens"].median()))
+            if "n_chunks_variant" in subset:
+                row["median_chunks"] = round(float(subset["n_chunks_variant"].median()))
+            rows.append(row)
+    return pd.DataFrame(rows)
 
 
 def transition_counts(paired: pd.DataFrame) -> pd.DataFrame:
