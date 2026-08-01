@@ -29,6 +29,7 @@ from monitor_localization.evaluation import (
     RECOVERED,
     delta_vs_length,
     evaluate,
+    length_effect_by_arm,
     mcnemar,
     pair_results,
     transition_counts,
@@ -152,6 +153,20 @@ def main() -> int:
         print("  benign, where any rise is a false positive — is the signature of")
         print("  more draws rather than better localization.")
 
+    by_arm = length_effect_by_arm(paired)
+    _section("Length effect per arm (rho = rank; slope = score points per 10x length)")
+    if by_arm.empty:
+        print("  Not enough runs per label to test.")
+    else:
+        print(by_arm.to_string(index=False))
+        print("\n  The delta column nets the arms against each other, which cannot")
+        print("  distinguish chunking INTRODUCING a length bias from chunking")
+        print("  INHERITING one the global monitor already had. Comparing the two")
+        print("  arms' own slopes does: a global slope that is already steep, with")
+        print("  a chunk slope no steeper, means chunking is not the source.")
+        print("  Read the slope alongside rho — a significant rho on a slope of a")
+        print("  point or two per decade does not move a decision made at 50.")
+
     _section(f"Recoveries (top {args.top} by delta)")
     recovered = paired[paired["transition"] == RECOVERED].nlargest(args.top, "delta")
     for _, row in recovered.iterrows():
@@ -185,9 +200,16 @@ def main() -> int:
     paired.to_csv(out / "paired.csv", index=False)
     transitions.to_csv(out / "transitions.csv", index=False)
     lengths.to_csv(out / "delta_vs_length.csv", index=False)
+    by_arm.to_csv(out / "length_effect_by_arm.csv", index=False)
 
     _section("Written")
-    for name in ("comparison.json", "paired.csv", "transitions.csv", "delta_vs_length.csv"):
+    for name in (
+        "comparison.json",
+        "paired.csv",
+        "transitions.csv",
+        "delta_vs_length.csv",
+        "length_effect_by_arm.csv",
+    ):
         print(f"  {out / name}")
     return 0
 

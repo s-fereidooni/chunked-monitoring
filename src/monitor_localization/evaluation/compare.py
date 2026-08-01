@@ -23,7 +23,10 @@ from monitor_localization.evaluation.failures import (
     TRUE_POSITIVE,
     classify,
 )
-from monitor_localization.evaluation.length import add_length_columns
+from monitor_localization.evaluation.length import (
+    MIN_SPREAD_FOR_CORRELATION,
+    add_length_columns,
+)
 from monitor_localization.evaluation.metrics import DEFAULT_THRESHOLD
 
 RECOVERED = "recovered"  # global missed it, chunk caught it
@@ -176,6 +179,82 @@ def delta_vs_length(paired: pd.DataFrame, min_runs: int = 15) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame(columns=columns)
     return pd.DataFrame(rows).sort_values("rho_delta_vs_length", ascending=False)
+
+
+def _explode_labels(paired: pd.DataFrame) -> pd.DataFrame:
+    frame = paired.copy()
+    frame["label_list"] = frame["labels"].apply(
+        lambda s: [x for x in str(s).split(";") if x and x != "normal"] or ["benign"]
+    )
+    return frame.explode("label_list")
+
+
+def length_effect_by_arm(paired: pd.DataFrame, min_runs: int = 15) -> pd.DataFrame:
+    """Within-label length effect for each arm separately, plus the delta.
+
+    `delta_vs_length` nets the two arms against each other, which hides whether a
+    correlation in the delta reflects chunking introducing a length bias or
+    merely inheriting one the global monitor already had. Reporting each arm's
+    own slope separates those: if the global slope is already steep and the chunk
+    slope matches it, chunking is not the source.
+
+    Two statistics per arm, because they answer different questions:
+
+    - `rho`  Spearman rank correlation — is there a monotone length effect at
+             all? Robust to the score distribution being bimodal, which these
+             are, but unitless.
+    - `slope` OLS of score on log10(tokens), in score points per 10x length —
+             how *big* the effect is on the 0-100 scale the threshold lives on.
+             A significant rho on a slope of ~1 point/decade is not a threat to
+             a decision made at 50.
+    """
+    from scipy import stats
+
+    exploded = _explode_labels(paired)
+
+    rows: list[dict[str, Any]] = []
+    for label, group in exploded.groupby("label_list"):
+        group = group[group["tokens"].notna() & (group["tokens"] > 0)]
+        if len(group) < min_runs or group["tokens"].nunique() < 2:
+            continue
+        log_tokens = np.log10(group["tokens"])
+        p10, p90 = np.percentile(group["tokens"], [10, 90])
+        spread = p90 / max(p10, 1)
+        row: dict[str, Any] = {
+            "label": label,
+            "n": len(group),
+            "spread": round(spread, 1),
+            # Below this spread the label barely varies in length, so a
+            # per-decade slope extrapolates well past the observed range.
+            "interpretable": spread >= MIN_SPREAD_FOR_CORRELATION,
+        }
+        for arm, column in (
+            ("global", "score_baseline"),
+            ("chunk", "score_variant"),
+            ("delta", "delta"),
+        ):
+            values = group[column]
+            # Spearman and OLS are both undefined against a constant input.
+            if values.nunique() < 2:
+                row |= {f"rho_{arm}": 0.0, f"p_{arm}": 1.0, f"slope_{arm}": 0.0}
+                continue
+            rho, p_value = stats.spearmanr(log_tokens, values)
+            fit = stats.linregress(log_tokens, values)
+            row |= {
+                f"rho_{arm}": round(float(rho), 3),
+                f"p_{arm}": round(float(p_value), 4),
+                f"slope_{arm}": round(float(fit.slope), 1),
+            }
+        rows.append(row)
+
+    columns = ["label", "n", "spread", "interpretable"] + [
+        f"{stat}_{arm}"
+        for arm in ("global", "chunk", "delta")
+        for stat in ("rho", "p", "slope")
+    ]
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows).sort_values("rho_delta", ascending=False)
 
 
 def transition_counts(paired: pd.DataFrame) -> pd.DataFrame:
