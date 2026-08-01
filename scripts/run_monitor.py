@@ -93,17 +93,31 @@ def read_results(path: Path) -> list[dict]:
     return rows
 
 
-def prune_failed(path: Path) -> set[int]:
-    """Drop failed rows from a results file; return the run ids that remain.
+def _incomplete(row: dict, retry_partial: bool) -> bool:
+    """Is this row missing data that a resume should refetch?
 
-    A failed row is missing data, not a result, so resuming retries it — and the
-    stale row has to go, or the retried run would appear twice and downstream
-    analysis would see a phantom failure alongside its own success.
+    A run-level error always is. With `retry_partial`, so is a chunked run that
+    lost individual chunks to transient errors: those chunks are dropped by the
+    aggregator, so the run scored on fewer draws than its length warrants —
+    which biases a max aggregate downward and quietly flatters the arm.
+    """
+    if row.get("error"):
+        return True
+    return retry_partial and bool((row.get("metadata") or {}).get("n_failed_chunks"))
+
+
+def prune_failed(path: Path, retry_partial: bool = False) -> set[int]:
+    """Drop incomplete rows from a results file; return the run ids that remain.
+
+    The stale row has to go, or the retried run would appear twice and
+    downstream analysis would see a phantom failure alongside its own success.
+    Re-running a partial row is nearly free: the response cache is keyed per
+    chunk, so only the chunks that actually failed cost a call.
     """
     rows = read_results(path)
-    kept = [r for r in rows if not r.get("error")]
+    kept = [r for r in rows if not _incomplete(r, retry_partial)]
     if len(kept) != len(rows):
-        logger.info("dropping %d failed rows before resuming", len(rows) - len(kept))
+        logger.info("dropping %d incomplete rows before resuming", len(rows) - len(kept))
         path.write_text("".join(json.dumps(r) + "\n" for r in kept))
     return {r["run_id"] for r in kept}
 
@@ -130,6 +144,17 @@ def main() -> int:
         action="store_true",
         help="append to an existing results file, scoring only the runs missing from it",
     )
+    parser.add_argument(
+        "--retry-partial",
+        action="store_true",
+        help="with --resume, also re-run chunked rows that lost chunks to transient errors",
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=None,
+        help="override model.max_concurrency (lower it to stay under a TPM ceiling)",
+    )
     parser.add_argument("--no-cache", action="store_true")
     parser.add_argument("--dry-run", action="store_true", help="report the plan, make no calls")
     args = parser.parse_args()
@@ -137,6 +162,8 @@ def main() -> int:
     load_env()
     setup_logging()
     cfg = ExperimentConfig.from_yaml(args.config)
+    if args.concurrency:
+        cfg.model.max_concurrency = args.concurrency
 
     try:
         run_ids = subset_run_ids()
@@ -153,7 +180,7 @@ def main() -> int:
     all_run_ids = list(run_ids)
     already_scored: set[int] = set()
     if args.resume:
-        already_scored = prune_failed(run.results_path)
+        already_scored = prune_failed(run.results_path, retry_partial=args.retry_partial)
         run_ids = [i for i in run_ids if i not in already_scored]
         logger.info(
             "Resuming: %d already scored, %d to go", len(already_scored), len(run_ids)
