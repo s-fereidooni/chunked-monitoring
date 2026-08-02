@@ -15,79 +15,187 @@ import argparse
 from pathlib import Path
 
 import matplotlib
+import numpy as np
 import pandas as pd
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.patches import Polygon  # noqa: E402
 
 from monitor_localization.config import ExperimentConfig  # noqa: E402
 from monitor_localization.evaluation import DEFAULT_THRESHOLD  # noqa: E402
 from monitor_localization.experiment import ExperimentRun  # noqa: E402
 from monitor_localization.utils import setup_logging  # noqa: E402
 
-GLOBAL_COLOR = "#8c8c8c"
-CHUNK_COLOR = "#1f77b4"
-MEAN_COLOR = "#c44e52"
-POSITIVE_COLOR = "#c44e52"
-BENIGN_COLOR = "#9fb8c8"
+# --- design system ----------------------------------------------------------
+# One palette across every figure so the same series reads the same everywhere:
+# the baseline is always warm stone, the chunked arm always teal, and the
+# alternative aggregation always amber.
+PAPER = "#FDFCFA"
+INK = "#17171A"
+MUTED = "#78767B"
+HAIRLINE = "#E4E1DB"
+
+GLOBAL = "#BDB5AB"
+GLOBAL_DARK = "#8A8177"
+CHUNK = "#0E7C7B"
+MEAN = "#DE8A3C"
+POSITIVE = "#C2415B"
+BENIGN = "#A9BAC6"
+
+STACK = ["Avenir Next", "Avenir", "Helvetica Neue", "DejaVu Sans"]
 
 # Shortened for axis labels; the tables keep the full names.
 SHORT = {
-    "match_weaker_model": "match weaker\nmodel",
-    "partial_problem_solving": "partial problem\nsolving",
-    "reasoning_about_task": "reasoning about\ntask",
-    "bypass_constraints": "bypass\nconstraints",
+    "match_weaker_model": "match weaker model",
+    "partial_problem_solving": "partial problem solving",
+    "reasoning_about_task": "reasoning about task",
+    "bypass_constraints": "bypass constraints",
 }
 
 
 def _style() -> None:
     plt.rcParams.update(
         {
-            "figure.dpi": 150,
+            "figure.dpi": 220,
             "savefig.bbox": "tight",
-            "font.size": 9,
+            "savefig.pad_inches": 0.35,
+            "figure.facecolor": PAPER,
+            "axes.facecolor": PAPER,
+            "savefig.facecolor": PAPER,
+            "font.family": "sans-serif",
+            "font.sans-serif": STACK,
+            "font.size": 9.5,
+            "text.color": INK,
+            "axes.labelcolor": MUTED,
+            "axes.edgecolor": HAIRLINE,
+            "xtick.color": MUTED,
+            "ytick.color": MUTED,
+            "xtick.labelcolor": INK,
+            "ytick.labelcolor": INK,
             "axes.spines.top": False,
             "axes.spines.right": False,
-            "axes.grid": True,
-            "grid.alpha": 0.25,
-            "grid.linestyle": "-",
+            "axes.spines.left": False,
+            "axes.spines.bottom": False,
+            "xtick.major.size": 0,
+            "ytick.major.size": 0,
+            "axes.grid": False,
             "axes.axisbelow": True,
+            "legend.frameon": False,
         }
     )
+
+
+def _title(ax: plt.Axes, headline: str, subtitle: str = "") -> None:
+    """Headline states the finding; subtitle carries the caveat or the n.
+
+    Pad scales with the subtitle's line count — a fixed pad lets a two-line
+    subtitle run back through the headline.
+    """
+    lines = subtitle.count("\n") + 1 if subtitle else 0
+    pad = 14 + 13 * lines
+    ax.set_title(
+        headline, loc="left", fontsize=12.5, fontweight="demibold",
+        color=INK, pad=pad,
+    )
+    if subtitle:
+        # Anchored to grow downward from just under the headline. With
+        # va="bottom" the block grows upward instead and runs into the title.
+        ax.annotate(
+            subtitle, xy=(0, 1), xycoords="axes fraction", xytext=(0, pad - 7),
+            textcoords="offset points", fontsize=9, color=MUTED, va="top",
+            linespacing=1.5,
+        )
 
 
 def _label(name: str) -> str:
     return SHORT.get(name, name.replace("_", " "))
 
 
+def _vgrid(ax: plt.Axes, ticks: list[float]) -> None:
+    for tick in ticks:
+        ax.axvline(tick, color=HAIRLINE, lw=0.8, zorder=0)
+
+
+# --- figures ----------------------------------------------------------------
+
+
 def recall_by_label(out: Path, fmt: str, results: Path) -> Path | None:
-    """Headline: which behaviors chunking moves, and which it does not."""
+    """Headline: which behaviors chunking moves, and which it does not.
+
+    A dumbbell rather than paired bars — the quantity of interest is the
+    *movement* between the two arms, and a connecting line shows that directly
+    while paired bars make the reader difference two lengths by eye.
+    """
     path = results / "recall_by_aggregation.csv"
     if not path.is_file():
         return None
     table = pd.read_csv(path)
-    table = table[table["is_positive"]].sort_values("chunk_max")
+    # `global` is a keyword, so it cannot be read off an itertuples row.
+    table = table.rename(columns={"global": "base"})
+    table = table[table["is_positive"]].copy()
     if table.empty:
         return None
+    table["delta"] = table["chunk_max"] - table["base"]
+    table = table.sort_values("delta")
 
-    fig, ax = plt.subplots(figsize=(6.4, 3.6))
-    y = range(len(table))
-    height = 0.38
-    ax.barh([i + height / 2 for i in y], table["global"], height,
-            label="global", color=GLOBAL_COLOR)
-    ax.barh([i - height / 2 for i in y], table["chunk_max"], height,
-            label="chunked (max)", color=CHUNK_COLOR)
-    ax.set_yticks(list(y))
-    ax.set_yticklabels([_label(name) for name in table["label"]])
-    ax.set_xlabel("recall at threshold 50")
-    ax.set_xlim(0, 1)
-    ax.legend(loc="lower right", frameon=False)
-    ax.set_title("Chunking moves three labels and leaves two untouched", loc="left")
-    for i, (g, c) in enumerate(zip(table["global"], table["chunk_max"], strict=True)):
-        if c - g > 0.05:
-            ax.annotate(f"+{c - g:.2f}", (c, i - height / 2), xytext=(4, 0),
-                        textcoords="offset points", va="center", fontsize=8,
-                        color=CHUNK_COLOR)
+    fig, ax = plt.subplots(figsize=(7.4, 4.2))
+    _vgrid(ax, [0, 0.25, 0.5, 0.75, 1.0])
+
+    # 0.05 rather than 0: sabotage moves +0.02, which is one run and should not
+    # be coloured as a gain. A decline is called out rather than folded into
+    # "no change" — gives_up genuinely gets worse.
+    for i, row in enumerate(table.itertuples()):
+        moved = row.delta >= 0.05
+        declined = row.delta <= -0.02
+        ax.plot(
+            [row.base, row.chunk_max], [i, i],
+            color=CHUNK if moved else HAIRLINE,
+            lw=3.2 if moved else 2.4, alpha=0.30 if moved else 1,
+            solid_capstyle="round", zorder=1,
+        )
+        ax.scatter(row.base, i, s=88, color=GLOBAL, zorder=3,
+                   edgecolor=PAPER, linewidth=1.6)
+        ax.scatter(row.chunk_max, i, s=88, color=CHUNK if moved else GLOBAL_DARK,
+                   zorder=3, edgecolor=PAPER, linewidth=1.6)
+        anchor = max(row.chunk_max, row.base)
+        if moved:
+            ax.annotate(
+                f"+{row.delta:.2f}", (anchor, i), xytext=(13, 0),
+                textcoords="offset points", va="center", fontsize=9.5,
+                color=CHUNK, fontweight="demibold",
+            )
+        elif declined:
+            ax.annotate(
+                f"{row.delta:.2f}   worse", (anchor, i), xytext=(13, 0),
+                textcoords="offset points", va="center", fontsize=9,
+                color=POSITIVE,
+            )
+        else:
+            ax.annotate(
+                "no change", (anchor, i), xytext=(13, 0),
+                textcoords="offset points", va="center", fontsize=9,
+                color=MUTED, style="italic",
+            )
+
+    ax.set_yticks(range(len(table)))
+    ax.set_yticklabels([_label(n) for n in table["label"]], fontsize=10.5)
+    ax.set_xticks([0, 0.25, 0.5, 0.75, 1.0])
+    ax.set_xticklabels(["0", ".25", ".50", ".75", "1.0"])
+    ax.set_xlim(-0.04, 1.18)
+    ax.set_ylim(-0.75, len(table) - 0.15)
+    ax.set_xlabel("recall at threshold 50", fontsize=9.5, labelpad=8)
+
+    top = len(table) - 1
+    ax.annotate("global", (table.iloc[top]["base"], top), xytext=(0, 17),
+                textcoords="offset points", ha="center", fontsize=9.5,
+                color=GLOBAL_DARK, fontweight="demibold")
+    ax.annotate("chunked", (table.iloc[top]["chunk_max"], top), xytext=(0, 17),
+                textcoords="offset points", ha="center", fontsize=9.5,
+                color=CHUNK, fontweight="demibold")
+
+    _title(ax, "Chunking moves three behaviours and leaves two at the floor",
+           "recall on 261 sandbagging runs · gpt-4.1-mini monitor · paired design")
     return _save(fig, out / f"recall_by_label.{fmt}")
 
 
@@ -97,35 +205,50 @@ def aggregation(out: Path, fmt: str, results: Path) -> Path | None:
     if not path.is_file():
         return None
     table = pd.read_csv(path)
+    table = table.rename(columns={"global": "base"})
     table = table[table["is_positive"] & (table["chunk_max"] > 0.05)]
-    table = table.sort_values("chunk_max", ascending=False)
+    table = table.sort_values("chunk_max")
     if table.empty:
         return None
 
-    fig, ax = plt.subplots(figsize=(6.4, 3.4))
-    x = range(len(table))
-    width = 0.27
-    ax.bar([i - width for i in x], table["global"], width,
-           label="global", color=GLOBAL_COLOR)
-    ax.bar(list(x), table["chunk_max"], width,
-           label="chunked, max", color=CHUNK_COLOR)
-    ax.bar([i + width for i in x], table["chunk_mean"], width,
-           label="chunked, mean", color=MEAN_COLOR)
-    # A zero bar is invisible and reads as missing data, so label it explicitly —
-    # mean collapsing to 0.00 is a result, not an absent measurement.
-    for i, value in enumerate(table["chunk_mean"]):
-        if value < 0.02:
-            ax.annotate("0.00", (i + width, 0.01), ha="center", va="bottom",
-                        fontsize=8, color=MEAN_COLOR, fontweight="bold")
-    ax.set_xticks(list(x))
-    ax.set_xticklabels([_label(name) for name in table["label"]])
-    ax.set_ylabel("recall at threshold 50")
-    ax.set_ylim(0, 1.05)
-    ax.legend(frameon=False, loc="upper right")
-    ax.set_title(
-        "Mean aggregation cannot exploit extra draws — so where it still wins,\n"
-        "the gain is not a draw-count artifact",
-        loc="left",
+    fig, ax = plt.subplots(figsize=(7.4, 3.9))
+    _vgrid(ax, [0, 0.25, 0.5, 0.75, 1.0])
+
+    for i, row in enumerate(table.itertuples()):
+        ax.plot([min(row.base, row.chunk_mean), row.chunk_max], [i, i],
+                color=HAIRLINE, lw=2.2, solid_capstyle="round", zorder=1)
+        for value, color in ((row.base, GLOBAL), (row.chunk_mean, MEAN),
+                             (row.chunk_max, CHUNK)):
+            ax.scatter(value, i, s=86, color=color, zorder=3,
+                       edgecolor=PAPER, linewidth=1.6)
+        # A zero is invisible as a bar and reads as missing data; mean collapsing
+        # to 0.00 is the result, so it gets said out loud.
+        if row.chunk_mean < 0.02:
+            ax.annotate("0.00", (row.chunk_mean, i), xytext=(0, -17),
+                        textcoords="offset points", ha="center", fontsize=8.5,
+                        color=MEAN, fontweight="demibold")
+
+    ax.set_yticks(range(len(table)))
+    ax.set_yticklabels([_label(n) for n in table["label"]], fontsize=10.5)
+    ax.set_xticks([0, 0.25, 0.5, 0.75, 1.0])
+    ax.set_xticklabels(["0", ".25", ".50", ".75", "1.0"])
+    ax.set_xlim(-0.05, 1.1)
+    ax.set_ylim(-0.8, len(table) - 0.05)
+    ax.set_xlabel("recall at threshold 50", fontsize=9.5, labelpad=8)
+
+    handles = [
+        plt.Line2D([], [], marker="o", ls="", ms=8, color=c, label=t)
+        for c, t in ((GLOBAL, "global"), (MEAN, "chunked · mean"),
+                     (CHUNK, "chunked · max"))
+    ]
+    ax.legend(handles=handles, loc="lower right", fontsize=9.5,
+              handletextpad=0.4, borderpad=0.8, labelspacing=0.55)
+
+    _title(
+        ax,
+        "Two failure modes hide behind one number",
+        "mean cannot exploit extra draws — where it collapses, evidence was local;\n"
+        "where it survives, the gain is something else entirely",
     )
     return _save(fig, out / f"aggregation.{fmt}")
 
@@ -137,36 +260,67 @@ def score_scatter(out: Path, fmt: str, results: Path, threshold: float) -> Path 
         return None
     paired = pd.read_csv(path)
 
-    fig, ax = plt.subplots(figsize=(4.8, 4.8))
-    jitter = 1.6
-    rng = __import__("numpy").random.default_rng(0)
-    for mask, color, name in (
-        (~paired["is_positive"], BENIGN_COLOR, "benign"),
-        (paired["is_positive"], POSITIVE_COLOR, "sandbagging"),
+    fig, ax = plt.subplots(figsize=(5.6, 5.6))
+    # Shade the region where the chunked arm catches what global missed, so the
+    # asymmetry is legible before any point is read.
+    ax.add_patch(Polygon([(-6, threshold), (threshold, threshold), (threshold, 106),
+                          (-6, 106)], closed=True, facecolor=CHUNK, alpha=0.05,
+                         zorder=0, linewidth=0))
+    ax.add_patch(Polygon([(threshold, -6), (106, -6), (106, threshold),
+                          (threshold, threshold)], closed=True, facecolor=GLOBAL,
+                         alpha=0.05, zorder=0, linewidth=0))
+
+    for tick in (0, 25, 50, 75, 100):
+        ax.axhline(tick, color=HAIRLINE, lw=0.7, zorder=1)
+        ax.axvline(tick, color=HAIRLINE, lw=0.7, zorder=1)
+    ax.plot([-6, 106], [-6, 106], color=MUTED, lw=0.8, ls=(0, (4, 4)), zorder=2)
+
+    rng = np.random.default_rng(0)
+    for mask, color, name, size in (
+        (~paired["is_positive"], BENIGN, "benign", 17),
+        (paired["is_positive"], POSITIVE, "sandbagging", 21),
     ):
         group = paired[mask]
         ax.scatter(
-            group["score_baseline"] + rng.normal(0, jitter, len(group)),
-            group["score_variant"] + rng.normal(0, jitter, len(group)),
-            s=13, alpha=0.55, color=color, label=name, linewidths=0,
+            group["score_baseline"] + rng.normal(0, 1.5, len(group)),
+            group["score_variant"] + rng.normal(0, 1.5, len(group)),
+            s=size, alpha=0.62, color=color, label=name, zorder=4,
+            edgecolor=PAPER, linewidth=0.4,
         )
-    ax.plot([0, 100], [0, 100], color="#333", lw=0.7, ls="--", zorder=0)
-    ax.axhline(threshold, color="#333", lw=0.7, alpha=0.5)
-    ax.axvline(threshold, color="#333", lw=0.7, alpha=0.5)
-    ax.set_xlabel("global monitor score")
-    ax.set_ylabel("chunked monitor score")
+
+    recovered = int((paired["transition"] == "recovered").sum())
+    lost = paired[paired["transition"] == "lost"]
+    # The recovered cluster fills this corner, so the count needs a plate behind
+    # it to stay legible over the points.
+    ax.annotate(
+        f"{recovered} recovered", (26, 62), fontsize=13.5, color=CHUNK,
+        ha="center", va="center", fontweight="demibold", zorder=6,
+        bbox={"boxstyle": "round,pad=0.5", "facecolor": PAPER,
+              "edgecolor": "none", "alpha": 0.88},
+    )
+    # Point at the lost run rather than labelling empty space near it.
+    if not lost.empty:
+        row = lost.iloc[0]
+        ax.annotate(
+            f"{len(lost)} lost", (row["score_baseline"], row["score_variant"]),
+            xytext=(-14, 26), textcoords="offset points", fontsize=10.5,
+            color=GLOBAL_DARK, ha="right", fontweight="demibold", zorder=6,
+            arrowprops={"arrowstyle": "-", "color": GLOBAL_DARK, "lw": 0.9,
+                        "shrinkA": 2, "shrinkB": 6},
+        )
+
+    ax.set_xlabel("global monitor score", fontsize=9.5, labelpad=8)
+    ax.set_ylabel("chunked monitor score", fontsize=9.5, labelpad=8)
+    ax.set_xticks([0, 25, 50, 75, 100])
+    ax.set_yticks([0, 25, 50, 75, 100])
     ax.set_xlim(-6, 106)
     ax.set_ylim(-6, 106)
     ax.set_aspect("equal")
+    ax.legend(loc="upper left", bbox_to_anchor=(0.50, 0.42), fontsize=9.5,
+              handletextpad=0.3, markerscale=1.7, labelspacing=0.5)
 
-    recovered = int((paired["transition"] == "recovered").sum())
-    lost = int((paired["transition"] == "lost").sum())
-    ax.annotate(f"{recovered} recovered", (4, 96), fontsize=9, color=CHUNK_COLOR,
-                va="top", fontweight="bold")
-    ax.annotate(f"{lost} lost", (96, 4), fontsize=9, color="#555",
-                ha="right", fontweight="bold")
-    ax.legend(frameon=False, loc="center right", fontsize=8)
-    ax.set_title("Paired scores, one point per run", loc="left")
+    _title(ax, "Every run, scored twice",
+           f"{len(paired)} transcripts · threshold {threshold:g} · McNemar p < 0.0001")
     return _save(fig, out / f"score_scatter.{fmt}")
 
 
@@ -178,25 +332,48 @@ def fpr_by_length(out: Path, fmt: str, results: Path, baseline: Path) -> Path | 
         return None
     frames = {name: pd.read_csv(p) for name, p in paths.items()}
 
-    fig, ax = plt.subplots(figsize=(6.0, 3.2))
-    for name, color in (("global", GLOBAL_COLOR), ("chunked", CHUNK_COLOR)):
+    fig, ax = plt.subplots(figsize=(7.4, 3.9))
+    for tick in (0, 0.05, 0.10, 0.15):
+        ax.axhline(tick, color=HAIRLINE, lw=0.8, zorder=0)
+
+    # Both arms sit at zero for the first eight deciles, so a solid global line
+    # would be hidden underneath the chunked one. Dashing it, and drawing it
+    # last, keeps the overlap visible as overlap.
+    for name, color, dash, z in (
+        ("chunked", CHUNK, None, 3),
+        ("global", GLOBAL_DARK, (0, (5, 3)), 5),
+    ):
         frame = frames[name]
-        ax.plot(frame["length_decile"], frame["fpr"], marker="o", ms=4,
-                color=color, label=name)
-    ax.set_xlabel("transcript length decile (benign runs only)")
-    ax.set_ylabel("false-positive rate")
-    ax.set_xticks(range(10))
-    ax.legend(frameon=False)
-    ax.set_title(
-        "False positives concentrate in the longest transcripts for both arms",
-        loc="left",
-    )
+        x = frame["length_decile"]
+        ax.fill_between(x, 0, frame["fpr"], color=color, alpha=0.10, zorder=1)
+        ax.plot(x, frame["fpr"], color=color, lw=2.4, zorder=z,
+                solid_capstyle="round", ls=dash or "-")
+        ax.scatter(x, frame["fpr"], s=42, color=color, zorder=z + 1,
+                   edgecolor=PAPER, linewidth=1.4)
+        last = frame.iloc[-1]
+        ax.annotate(name, (last["length_decile"], last["fpr"]), xytext=(11, 0),
+                    textcoords="offset points", va="center", fontsize=10,
+                    color=color, fontweight="demibold")
+
     median = frames["global"]["median_tokens"]
+    ax.set_xticks(range(len(median)))
     ax.set_xticklabels(
-        [f"{int(t / 1000)}k" if t >= 1000 else str(int(t)) for t in median],
-        fontsize=7,
+        [f"{t / 1000:.0f}k" if t >= 1000 else f"{t:.0f}" for t in median],
+        fontsize=9,
     )
-    ax.set_xlabel("median tokens in decile (benign runs only)")
+    ax.set_yticks([0, 0.05, 0.10, 0.15])
+    ax.set_yticklabels(["0", "5%", "10%", "15%"])
+    ax.set_xlim(-0.4, len(median) + 0.55)
+    ax.set_ylim(-0.012, 0.20)
+    ax.set_xlabel("median transcript length in decile (benign runs only)",
+                  fontsize=9.5, labelpad=8)
+
+    _title(
+        ax,
+        "Chunking redistributes false positives rather than removing them",
+        "293 benign runs · 2 false positives in each arm — the shape is real, "
+        "the counts are small",
+    )
     return _save(fig, out / f"fpr_by_length.{fmt}")
 
 
