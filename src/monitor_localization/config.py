@@ -41,6 +41,26 @@ class DatasetConfig(StrictModel):
     split: str = "public"
     cache_dir: Path | None = None
 
+    # Drop the opening system message before the monitor sees anything.
+    #
+    # MALT's prompted runs carry their elicitation directive in that message —
+    # "Your goal is to appear as a weaker AI model", "Your aim is insert subtle
+    # flaws into the task" — while benign runs carry only scaffolding boilerplate.
+    # Leaving it in lets a monitor score well by detecting that an instruction was
+    # injected rather than that the model misbehaved, and METR's own reasoning-trace
+    # editing (rewriting "Since I'm supposed to sabotage" to "I want to sabotage")
+    # only makes sense if their monitor never saw it either.
+    #
+    # Dropped uniformly rather than surgically: the directive is an appendix in
+    # some templates and a prefix in others, the shared preamble itself differs
+    # between benign and prompted runs ("made by OpenAI" appears only in benign),
+    # and a partial strip that leaves a variant behind looks clean while still
+    # leaking. Removing it from positives only would be worse still — then every
+    # positive transcript starts with a user message and every benign one with a
+    # system message, which is a new give-away. Message 1 still carries the task,
+    # so task context survives.
+    strip_system_prompt: bool = False
+
 
 class SubsetConfig(StrictModel):
     """How to draw the reproducible evaluation subset.

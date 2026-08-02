@@ -7,6 +7,7 @@ from monitor_localization.dataset.loaders import (
     load_transcripts,
     metadata_table,
     row_to_transcript,
+    strip_system_prompt,
 )
 from monitor_localization.dataset.schema import (
     ALL_LABELS,
@@ -40,6 +41,7 @@ __all__ = [
     "load_transcripts",
     "metadata_table",
     "row_to_transcript",
+    "strip_system_prompt",
     "save_subset",
     "subset_run_ids",
 ]

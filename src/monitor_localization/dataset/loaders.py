@@ -214,14 +214,29 @@ def flatten_samples(
     return [Message.from_raw(raw) for _, _, _, raw in items]
 
 
+def strip_system_prompt(transcript: Transcript) -> Transcript:
+    """Remove the leading system message, if there is one.
+
+    See `DatasetConfig.strip_system_prompt` for why this is uniform rather than
+    surgical. Only a *leading* system message is dropped: a system message
+    appearing mid-transcript is part of the interaction, not the scaffolding
+    header, and removing it would change what the agent was responding to.
+    """
+    messages = transcript.messages
+    if messages and messages[0].role == "system":
+        transcript.messages = messages[1:]
+    return transcript
+
+
 def row_to_transcript(
     row: dict[str, Any],
     strategy: FlattenStrategy = "dag",
+    strip_system: bool = False,
 ) -> Transcript:
     """Build a `Transcript` from one raw parquet row."""
     meta = row.get("metadata") or {}
     labels = meta.get("labels")
-    return Transcript(
+    transcript = Transcript(
         run_id=meta.get("run_id", -1),
         task_id=meta.get("task_id") or "",
         model=meta.get("model") or "",
@@ -231,6 +246,7 @@ def row_to_transcript(
         has_chain_of_thought=bool(meta.get("has_chain_of_thought")),
         messages=flatten_samples(row.get("samples") or [], strategy=strategy),
     )
+    return strip_system_prompt(transcript) if strip_system else transcript
 
 
 def iter_transcripts(
@@ -245,6 +261,7 @@ def iter_transcripts(
     run_id has been found.
     """
     cfg = cfg or DatasetConfig()
+    strip_system = cfg.strip_system_prompt
     fs = _filesystem()
     wanted = set(run_ids) if run_ids is not None else None
     remaining = set(wanted) if wanted is not None else None
@@ -270,7 +287,9 @@ def iter_transcripts(
                     if run_id not in remaining:
                         continue
                     remaining.discard(run_id)
-                yield row_to_transcript(row, strategy=strategy)
+                yield row_to_transcript(
+                    row, strategy=strategy, strip_system=strip_system
+                )
 
     if remaining:
         logger.warning(
