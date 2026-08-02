@@ -73,8 +73,18 @@ def main() -> int:
     )
     parser.add_argument("--messages", type=int, default=1,
                         help="how many opening messages to print")
+    parser.add_argument("--all", action="store_true",
+                        help="print every message, not just the opening ones")
     parser.add_argument("--chars", type=int, default=9000,
-                        help="per-message character cap")
+                        help="per-message character cap (ignored with --all)")
+    parser.add_argument(
+        "--stripped", action="store_true",
+        help="show what the monitor actually sees: scaffolding header removed and "
+             "prompt echoes redacted, i.e. the stripped config's view",
+    )
+    parser.add_argument("--out", type=Path, default=None,
+                        help="write to this file instead of stdout (transcripts "
+                             "run to hundreds of thousands of characters)")
     args = parser.parse_args()
 
     load_env()

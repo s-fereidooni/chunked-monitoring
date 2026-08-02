@@ -330,3 +330,31 @@ def test_the_marker_is_indistinguishable_from_malt_s_own_redactions():
     assert REDACTION == "[redacted]"
     assert "system prompt" not in REDACTION
     assert "scaffolding" not in REDACTION
+
+
+def test_experiment_config_dataset_reaches_the_loader():
+    """Regression: run_monitor must pass cfg.dataset into load_transcripts.
+
+    It previously called load_transcripts(run_ids) with no config, so the loader
+    fell back to DatasetConfig() defaults and ignored strip_system_prompt. The
+    inputs came out byte-identical to the unstripped run, every request hit the
+    response cache, and the pass reported 50/50 scored with 0 API calls — a
+    silent no-op that looked like a successful experiment.
+    """
+    import ast
+    from pathlib import Path
+
+    source = Path("scripts/run_monitor.py").read_text()
+    tree = ast.parse(source)
+    calls = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "load_transcripts"
+    ]
+    assert calls, "run_monitor.py no longer calls load_transcripts"
+    for call in calls:
+        assert any(kw.arg == "cfg" for kw in call.keywords), (
+            "load_transcripts called without cfg= — strip_system_prompt would be "
+            "silently ignored"
+        )

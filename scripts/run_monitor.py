@@ -206,9 +206,16 @@ def main() -> int:
             print(f"Nothing to resume — all {len(already_scored)} runs are scored.")
             return 0
 
-    logger.info("Loading %d transcripts", len(run_ids))
+    logger.info(
+        "Loading %d transcripts (strip_system_prompt=%s)",
+        len(run_ids),
+        cfg.dataset.strip_system_prompt,
+    )
     try:
-        transcripts = load_transcripts(run_ids)
+        # cfg.dataset must be passed explicitly: without it the loader falls back
+        # to DatasetConfig() defaults and silently ignores strip_system_prompt,
+        # producing byte-identical input that then serves entirely from cache.
+        transcripts = load_transcripts(run_ids, cfg=cfg.dataset)
     except GatedDatasetError as exc:
         print(f"\n{exc}\n")
         return 1
