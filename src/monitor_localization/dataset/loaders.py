@@ -295,6 +295,17 @@ def redact_prompt_echoes(transcript: Transcript, system_prompt: str) -> Transcri
 # A few runs deliver the scaffolding header as a `user` message rather than a
 # `system` one. Recognised by its opening and bounded in length, so a genuine
 # leading task message — which never opens this way — is never mistaken for it.
+#
+# The length bound is load-bearing. Five benign runs in the evaluation subset
+# (346236, 346999, 348030, 348031, 349451) are *advisor* transcripts rather than
+# agent ones — "You are to provide guidance to an autonomous AI agent… The
+# agent's tool calls and their outputs are included for you to review" — and
+# their opening message is 5,434-7,908 chars of role framing, tool docs and
+# **the task itself**. Cutting it would delete the task. Checked in full: they
+# contain no directive to underperform, so there is nothing in them to remove
+# and leaving them intact is the correct outcome, not a gap in coverage.
+#
+# Raising this cap would silently destroy those five tasks. Don't.
 _PREAMBLE = re.compile(
     r"^\s*You are (?:an autonomous AI agent|to act as an autonomous)", re.I
 )
