@@ -223,39 +223,6 @@ def flatten_samples(
 # concealed and that concealment tracks the label. That trades one give-away for
 # another.
 REDACTION = "[redacted]"
-MODEL_REDACTION = "[redacted]"
-
-# Model identifiers leaked by the same scaffolding logs. Worth removing because
-# the identifier is near-perfectly correlated with the label: all 1045 prompted
-# sandbagging runs in MALT are claude-3-7-sonnet, and the reviewed benign pool
-# contains none of that model. This only removes the literal string — it cannot
-# fix the underlying confound, since a model's writing style is still its own.
-# Exact identifiers only — every distinct `model` value in MALT's metadata.
-#
-# A pattern like `gpt-?[0-9]` looks equivalent and is not: it also matches "gpt2"
-# and "GPT-2", which appear as the *subject* of legitimate ML tasks. Redacting
-# those destroys task content ("train [model] on the Alpaca benchmark",
-# `tiktoken.get_encoding("[model]")`) and does so unevenly across labels, since
-# ML tasks are not spread uniformly. Bare "o3" is deliberately excluded for the
-# same reason — it collides with ordinary prose, and MALT has one o3 run.
-_MALT_MODEL_IDS = (
-    "claude-3-7-sonnet-20250219",
-    "claude-opus-4-20250514",
-    "claude-sonnet-4-20250514",
-    "claude-3-5-sonnet-20241022",
-    "claude-3-5-sonnet-20240620",
-    "claude-3-5-haiku-20241022",
-    "gpt-4o-2024-05-13",
-    "gpt-4-32k-0613",
-    "o3-2025-04-16",
-    "o1-preview",
-    "openrouter/deepseek/deepseek-r1-0528",
-    "fireworks/deepseek-v3-0324",
-    "fireworks/deepseek-v3",
-)
-_MODEL_ID = re.compile(
-    "|".join(re.escape(name) for name in _MALT_MODEL_IDS), re.I
-)
 
 # Only lines this long are considered for redaction. The echoes are dumps of the
 # scaffolding's request log, which are single very long lines; short lines that
@@ -322,13 +289,6 @@ def redact_prompt_echoes(transcript: Transcript, system_prompt: str) -> Transcri
                 changed = True
         if changed:
             message.content = "\n".join(lines)
-
-    for message in transcript.messages:
-        body = message.content or ""
-        if body:
-            redacted = _MODEL_ID.sub(MODEL_REDACTION, body)
-            if redacted != body:
-                message.content = redacted
     return transcript
 
 

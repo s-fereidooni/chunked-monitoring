@@ -13,14 +13,22 @@
 # comparison between the arms was therefore partly measuring how often each one
 # was shown the answer.
 #
+# Scope: only instructions about how the model should behave are removed. That
+# means the leading scaffolding header, and any verbatim copy of it the agent
+# quoted back into the run by grepping the scaffolding's own logs. Nothing else
+# is touched — METR already edits reasoning traces to strip attribution
+# ("I'm supposed to sabotage" -> "I want to sabotage") in the released dataset,
+# so the agent's own words are left exactly as they are.
+#
 # Two leaks remain and are NOT fixed here, because they are symmetric — both arms
 # read the same transcript, so they inflate absolute detection numbers without
 # biasing the chunked-vs-global comparison:
 #   - model:   all 1045 prompted sandbagging runs in MALT are claude-3-7-sonnet,
-#              and the reviewed benign pool contains none of that model.
+#              and the reviewed benign pool contains none of that model. Model
+#              identifiers are deliberately NOT redacted: they are metadata, not
+#              instructions, and redacting the string cannot hide a model's
+#              writing style anyway.
 #   - task_id: 70% of positive tasks never appear among benign runs.
-# A model-matched benign set would fix the first, but MALT has 0 manually
-# reviewed benign claude-3-7-sonnet runs, so it would cost label verification.
 
 name: sandbagging-stripped
 description: >
