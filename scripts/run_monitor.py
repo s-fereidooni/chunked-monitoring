@@ -133,6 +133,13 @@ def main() -> int:
     )
     parser.add_argument("--limit", type=int, default=None, help="score only the first N runs")
     parser.add_argument(
+        "--run-ids",
+        default=None,
+        help="restrict to these run_ids: a comma-separated list, or a path to a "
+             "file with one id per line. Unlike --limit this preserves whichever "
+             "composition the caller chose, so a pilot can stay stratified.",
+    )
+    parser.add_argument(
         "--calibrate",
         type=int,
         metavar="N",
@@ -171,6 +178,16 @@ def main() -> int:
         print("No evaluation subset found. Run scripts/build_subset.py first.")
         return 1
 
+    if args.run_ids:
+        source = Path(args.run_ids)
+        raw = source.read_text().split() if source.is_file() else args.run_ids.split(",")
+        wanted = {int(value.strip()) for value in raw if value.strip()}
+        missing = wanted - set(run_ids)
+        if missing:
+            print(f"{len(missing)} run_id(s) are not in the subset, e.g. "
+                  f"{sorted(missing)[:5]}")
+            return 1
+        run_ids = [rid for rid in run_ids if rid in wanted]
     if args.limit:
         run_ids = run_ids[: args.limit]
     if args.calibrate:
