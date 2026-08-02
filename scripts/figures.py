@@ -377,6 +377,163 @@ def fpr_by_length(out: Path, fmt: str, results: Path, baseline: Path) -> Path | 
     return _save(fig, out / f"fpr_by_length.{fmt}")
 
 
+# --- data exploration -------------------------------------------------------
+
+
+def _primary_label(frame: pd.DataFrame) -> pd.Series:
+    return frame["labels"].fillna("normal").str.split(";").str[0].replace(
+        {"normal": "benign"}
+    )
+
+
+def length_by_label(out: Path, fmt: str, baseline: Path) -> Path | None:
+    """Every transcript's length, by label — the confound underneath everything.
+
+    Individual points rather than a boxplot: with n=17 to n=293 per label the
+    quartile boxes imply a smoothness the data does not have, and the overlap
+    between labels is the whole point.
+    """
+    path = baseline / "per_sample.csv"
+    if not path.is_file():
+        return None
+    frame = pd.read_csv(path)
+    frame = frame[frame["n_characters"].notna()].copy()
+    frame["label"] = _primary_label(frame)
+    frame["tokens"] = frame["n_characters"] / 4.4
+    order = frame.groupby("label")["tokens"].median().sort_values().index.tolist()
+
+    fig, ax = plt.subplots(figsize=(7.4, 4.4))
+    rng = np.random.default_rng(0)
+    for i, label in enumerate(order):
+        group = frame[frame["label"] == label]
+        color = BENIGN if label == "benign" else POSITIVE
+        ax.scatter(
+            group["tokens"], i + rng.uniform(-0.24, 0.24, len(group)),
+            s=15, alpha=0.45, color=color, linewidths=0, zorder=3,
+        )
+        median = group["tokens"].median()
+        ax.scatter(median, i, marker="|", s=340, color=INK, linewidths=1.9, zorder=5)
+        ax.annotate(
+            f"{median / 1000:.0f}k" if median >= 1000 else f"{median:.0f}",
+            (median, i), xytext=(0, 13), textcoords="offset points", ha="center",
+            fontsize=8.5, color=INK, fontweight="demibold", zorder=6,
+        )
+
+    for tick in (1e3, 1e4, 1e5):
+        ax.axvline(tick, color=HAIRLINE, lw=0.8, zorder=0)
+    ax.set_xscale("log")
+    ax.tick_params(axis="x", which="minor", length=0)
+    ax.set_yticks(range(len(order)))
+    ax.set_yticklabels([_label(name) for name in order], fontsize=10.5)
+    ax.set_xticks([1e3, 1e4, 1e5])
+    ax.set_xticklabels(["1k", "10k", "100k"])
+    ax.set_xlim(3e2, 6e5)
+    ax.set_ylim(-0.7, len(order) - 0.35)
+    ax.set_xlabel("transcript length in tokens (log scale) · tick marks the median",
+                  fontsize=9.5, labelpad=8)
+    _title(
+        ax,
+        "Length is confounded with behaviour",
+        "median spans 24x across labels — so any per-label comparison is partly\n"
+        "a comparison of transcript lengths",
+    )
+    return _save(fig, out / f"length_by_label.{fmt}")
+
+
+def length_composition(out: Path, fmt: str, results: Path) -> Path | None:
+    """Which behaviors sit in each length quartile — why pooled splits mislead."""
+    path = results / "label_composition_by_length.csv"
+    if not path.is_file():
+        return None
+    table = pd.read_csv(path).set_index("label")
+    table = table[table.sum(axis=1) >= 5]
+    shares = table.div(table.sum(axis=0), axis=1)
+    order = shares.mean(axis=1).sort_values(ascending=False).index.tolist()
+
+    palette = [CHUNK, MEAN, POSITIVE, "#6B8E9E", GLOBAL_DARK, "#A8B5A0"]
+    fig, ax = plt.subplots(figsize=(7.4, 3.5))
+    left = np.zeros(len(shares.columns))
+    for i, label in enumerate(order):
+        values = shares.loc[label].to_numpy()
+        color = palette[i % len(palette)]
+        ax.barh(range(len(values)), values, left=left, height=0.68, color=color,
+                edgecolor=PAPER, linewidth=1.4)
+        for j, (value, start) in enumerate(zip(values, left, strict=True)):
+            if value > 0.11:
+                ax.annotate(
+                    _label(label), (start + value / 2, j), ha="center",
+                    va="center", fontsize=8.5, color=PAPER, fontweight="demibold",
+                )
+        left = left + values
+
+    ax.set_yticks(range(len(shares.columns)))
+    names = ["shortest", "", "", "longest"]
+    ax.set_yticklabels(
+        [f"{q}  ·  {name}" if name else str(q)
+         for q, name in zip(shares.columns, names, strict=False)],
+        fontsize=10,
+    )
+    ax.invert_yaxis()
+    ax.set_xticks([0, 0.25, 0.5, 0.75, 1.0])
+    ax.set_xticklabels(["0", "25%", "50%", "75%", "100%"])
+    ax.set_xlim(0, 1)
+    ax.set_xlabel("share of the quartile's positive runs", fontsize=9.5, labelpad=8)
+    _title(
+        ax,
+        "Length quartiles hold different behaviours, not the same one at "
+        "different lengths",
+        "which is why a gain that grows with length is not evidence that length "
+        "is what matters",
+    )
+    return _save(fig, out / f"length_composition.{fmt}")
+
+
+def run_source(out: Path, fmt: str, baseline: Path) -> Path | None:
+    """Prompted vs natural, by label — the sharpest limit on what this can claim.
+
+    Every benign run is unprompted and most positive labels are entirely
+    prompted, so a monitor can score well by detecting that an instruction was
+    injected rather than that the model sandbagged.
+    """
+    path = baseline / "per_sample.csv"
+    if not path.is_file():
+        return None
+    frame = pd.read_csv(path)
+    frame["label"] = _primary_label(frame)
+    table = pd.crosstab(frame["label"], frame["run_source"])
+    for column in ("prompted", "unprompted"):
+        if column not in table:
+            table[column] = 0
+    table = table.loc[table.sum(axis=1).sort_values().index]
+
+    fig, ax = plt.subplots(figsize=(7.4, 3.9))
+    y = range(len(table))
+    ax.barh(y, table["prompted"], height=0.62, color=POSITIVE, label="prompted")
+    ax.barh(y, table["unprompted"], left=table["prompted"], height=0.62,
+            color=BENIGN, label="natural (unprompted)")
+    for i, (_, row) in enumerate(table.iterrows()):
+        total = row["prompted"] + row["unprompted"]
+        ax.annotate(f"{total}", (total, i), xytext=(8, 0),
+                    textcoords="offset points", va="center", fontsize=9,
+                    color=MUTED)
+
+    ax.set_yticks(list(y))
+    ax.set_yticklabels([_label(name) for name in table.index], fontsize=10.5)
+    ax.set_xlabel("runs in the evaluation subset", fontsize=9.5, labelpad=8)
+    ax.set_xlim(0, table.sum(axis=1).max() * 1.13)
+    for tick in (0, 100, 200, 300):
+        ax.axvline(tick, color=HAIRLINE, lw=0.8, zorder=0)
+    ax.set_xticks([0, 100, 200, 300])
+    ax.legend(loc="lower right", fontsize=9.5, handletextpad=0.6, labelspacing=0.5)
+    _title(
+        ax,
+        "Prompting is almost perfectly confounded with behaviour",
+        "every benign run is natural and five of six positive labels are wholly\n"
+        "prompted — so “was an instruction injected” is available as a shortcut",
+    )
+    return _save(fig, out / f"run_source.{fmt}")
+
+
 def _save(fig: plt.Figure, path: Path) -> Path:
     fig.savefig(path)
     plt.close(fig)
@@ -399,6 +556,11 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     written = [
+        # exploration — what the dataset looks like before any monitor runs
+        length_by_label(out, args.format, global_dir),
+        run_source(out, args.format, global_dir),
+        length_composition(out, args.format, chunk_dir),
+        # results
         recall_by_label(out, args.format, chunk_dir),
         aggregation(out, args.format, chunk_dir),
         score_scatter(out, args.format, chunk_dir, args.threshold),
