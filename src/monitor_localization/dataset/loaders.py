@@ -223,14 +223,31 @@ MODEL_REDACTION = "[model]"
 # sandbagging runs in MALT are claude-3-7-sonnet, and the reviewed benign pool
 # contains none of that model. This only removes the literal string — it cannot
 # fix the underlying confound, since a model's writing style is still its own.
-# The o-series requires a suffix so that a bare "o3" in ordinary prose or code
-# survives; missing MALT's single o3 run costs nothing, over-redacting does.
+# Exact identifiers only — every distinct `model` value in MALT's metadata.
+#
+# A pattern like `gpt-?[0-9]` looks equivalent and is not: it also matches "gpt2"
+# and "GPT-2", which appear as the *subject* of legitimate ML tasks. Redacting
+# those destroys task content ("train [model] on the Alpaca benchmark",
+# `tiktoken.get_encoding("[model]")`) and does so unevenly across labels, since
+# ML tasks are not spread uniformly. Bare "o3" is deliberately excluded for the
+# same reason — it collides with ordinary prose, and MALT has one o3 run.
+_MALT_MODEL_IDS = (
+    "claude-3-7-sonnet-20250219",
+    "claude-opus-4-20250514",
+    "claude-sonnet-4-20250514",
+    "claude-3-5-sonnet-20241022",
+    "claude-3-5-sonnet-20240620",
+    "claude-3-5-haiku-20241022",
+    "gpt-4o-2024-05-13",
+    "gpt-4-32k-0613",
+    "o3-2025-04-16",
+    "o1-preview",
+    "openrouter/deepseek/deepseek-r1-0528",
+    "fireworks/deepseek-v3-0324",
+    "fireworks/deepseek-v3",
+)
 _MODEL_ID = re.compile(
-    r"\b(?:claude-[0-9a-z.\-]*(?:sonnet|opus|haiku)[0-9a-z\-]*"
-    r"|gpt-?[0-9][0-9a-z]*(?:-[0-9a-z]+)*"
-    r"|o[0-9]-(?:preview|mini|turbo|[0-9]{4}-[0-9]{2}-[0-9]{2})"
-    r"|deepseek[0-9a-z.\-]*)\b",
-    re.I,
+    "|".join(re.escape(name) for name in _MALT_MODEL_IDS), re.I
 )
 
 # Only lines this long are considered for redaction. The echoes are dumps of the
