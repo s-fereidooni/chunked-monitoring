@@ -267,16 +267,25 @@ def redact_prompt_echoes(transcript: Transcript, system_prompt: str) -> Transcri
     normalized_prompt = _normalize(system_prompt)
     if len(normalized_prompt) < _SHINGLE:
         return transcript
-    # Cheap prefilter: an echo contains the prompt from its start.
-    probe = normalized_prompt[:60]
     shingles = [
         normalized_prompt[i : i + _SHINGLE]
         for i in range(0, len(normalized_prompt) - _SHINGLE + 1, _STEP)
     ]
+    # Prefilter probes taken from the start, middle and end of the prompt. A
+    # single head probe is not enough: these dumps are themselves truncated
+    # ("the start and end of the output are shown below"), so an echo can begin
+    # partway through the prompt.
+    probes = [
+        normalized_prompt[offset : offset + 50]
+        for offset in (0, len(normalized_prompt) // 2, max(len(normalized_prompt) - 50, 0))
+    ]
 
     for message in transcript.messages:
         body = message.content or ""
-        if len(body) < _MIN_ECHO_LINE or probe not in _normalize(body):
+        if len(body) < _MIN_ECHO_LINE:
+            continue
+        normalized_body = _normalize(body)
+        if not any(probe in normalized_body for probe in probes):
             continue
         lines = body.splitlines()
         changed = False
