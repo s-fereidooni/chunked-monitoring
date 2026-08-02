@@ -10,6 +10,7 @@ run_ids.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterator, Sequence
 from typing import Any, Literal
 
@@ -214,17 +215,104 @@ def flatten_samples(
     return [Message.from_raw(raw) for _, _, _, raw in items]
 
 
-def strip_system_prompt(transcript: Transcript) -> Transcript:
-    """Remove the leading system message, if there is one.
+REDACTION = "[scaffolding log containing the system prompt — redacted]"
+MODEL_REDACTION = "[model]"
 
-    See `DatasetConfig.strip_system_prompt` for why this is uniform rather than
-    surgical. Only a *leading* system message is dropped: a system message
-    appearing mid-transcript is part of the interaction, not the scaffolding
-    header, and removing it would change what the agent was responding to.
+# Model identifiers leaked by the same scaffolding logs. Worth removing because
+# the identifier is near-perfectly correlated with the label: all 1045 prompted
+# sandbagging runs in MALT are claude-3-7-sonnet, and the reviewed benign pool
+# contains none of that model. This only removes the literal string — it cannot
+# fix the underlying confound, since a model's writing style is still its own.
+# The o-series requires a suffix so that a bare "o3" in ordinary prose or code
+# survives; missing MALT's single o3 run costs nothing, over-redacting does.
+_MODEL_ID = re.compile(
+    r"\b(?:claude-[0-9a-z.\-]*(?:sonnet|opus|haiku)[0-9a-z\-]*"
+    r"|gpt-?[0-9][0-9a-z]*(?:-[0-9a-z]+)*"
+    r"|o[0-9]-(?:preview|mini|turbo|[0-9]{4}-[0-9]{2}-[0-9]{2})"
+    r"|deepseek[0-9a-z.\-]*)\b",
+    re.I,
+)
+
+# Only lines this long are considered for redaction. The echoes are dumps of the
+# scaffolding's request log, which are single very long lines; short lines that
+# happen to overlap the prompt are the agent's own words and must survive.
+_MIN_ECHO_LINE = 200
+# Shingle size and step for matching a line against the system prompt.
+_SHINGLE, _STEP = 80, 40
+
+
+def _normalize(text: str) -> str:
+    """Collapse whitespace and undo JSON escaping, so a logged copy matches.
+
+    The echo arrives as escaped JSON — `\\n\\nInstructions:\\n- You must…` — so a
+    raw substring search against the original prompt finds nothing.
+    """
+    unescaped = text.replace("\\n", " ").replace("\\t", " ").replace('\\"', '"')
+    return re.sub(r"\s+", " ", unescaped).strip()
+
+
+def redact_prompt_echoes(transcript: Transcript, system_prompt: str) -> Transcript:
+    """Blank out later copies of the system prompt quoted back into the run.
+
+    Agents on these tasks sometimes grep their own VM and dump the scaffolding's
+    request log, which contains the elicitation prompt verbatim — so removing
+    message 0 alone leaves the directive in the transcript, and the monitored
+    model's name with it.
+
+    Redaction is per line and only for long lines, because the agent's *own*
+    phrasing ("I'll make it look like this is my best effort") legitimately
+    overlaps the directive's wording and is exactly the behavioural evidence the
+    monitor should be judging.
+    """
+    normalized_prompt = _normalize(system_prompt)
+    if len(normalized_prompt) < _SHINGLE:
+        return transcript
+    # Cheap prefilter: an echo contains the prompt from its start.
+    probe = normalized_prompt[:60]
+    shingles = [
+        normalized_prompt[i : i + _SHINGLE]
+        for i in range(0, len(normalized_prompt) - _SHINGLE + 1, _STEP)
+    ]
+
+    for message in transcript.messages:
+        body = message.content or ""
+        if len(body) < _MIN_ECHO_LINE or probe not in _normalize(body):
+            continue
+        lines = body.splitlines()
+        changed = False
+        for index, line in enumerate(lines):
+            if len(line) < _MIN_ECHO_LINE:
+                continue
+            normalized_line = _normalize(line)
+            if any(shingle in normalized_line for shingle in shingles):
+                lines[index] = REDACTION
+                changed = True
+        if changed:
+            message.content = "\n".join(lines)
+
+    for message in transcript.messages:
+        body = message.content or ""
+        if body:
+            redacted = _MODEL_ID.sub(MODEL_REDACTION, body)
+            if redacted != body:
+                message.content = redacted
+    return transcript
+
+
+def strip_system_prompt(transcript: Transcript) -> Transcript:
+    """Remove the leading system message and any later echo of it.
+
+    See `DatasetConfig.strip_system_prompt` for why the message itself is dropped
+    uniformly rather than surgically. Only a *leading* system message is dropped:
+    one appearing mid-transcript is part of the interaction, and removing it would
+    change what the agent was responding to.
     """
     messages = transcript.messages
     if messages and messages[0].role == "system":
+        system_prompt = messages[0].content or ""
         transcript.messages = messages[1:]
+        if system_prompt:
+            redact_prompt_echoes(transcript, system_prompt)
     return transcript
 
 
