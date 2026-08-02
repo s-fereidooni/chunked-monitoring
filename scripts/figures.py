@@ -325,7 +325,17 @@ def score_scatter(out: Path, fmt: str, results: Path, threshold: float) -> Path 
 
 
 def fpr_by_length(out: Path, fmt: str, results: Path, baseline: Path) -> Path | None:
-    """The length control: where each architecture's false positives sit."""
+    """Per-decile false-positive rate. NOT in the default set — see below.
+
+    Kept for diagnosis, deliberately not rendered by `main`. With 2 false
+    positives per arm across 293 benign runs, every point is a rate over ~11-50
+    runs: global's 0.182 is 2/11, and the entire visible gap between the two
+    curves is one run sitting in decile 8 rather than 9. The chart reads as a
+    large architectural difference and is nothing of the kind. The honest
+    version of this result is one sentence — both arms flagged 2 of 293, all of
+    them in the longest fifth of benign transcripts — so it belongs in prose,
+    not in a figure that dramatises four events.
+    """
     paths = {"chunked": results / "fpr_by_length_decile.csv",
              "global": baseline / "fpr_by_length_decile.csv"}
     if not all(p.is_file() for p in paths.values()):
@@ -564,7 +574,6 @@ def main() -> int:
         recall_by_label(out, args.format, chunk_dir),
         aggregation(out, args.format, chunk_dir),
         score_scatter(out, args.format, chunk_dir, args.threshold),
-        fpr_by_length(out, args.format, chunk_dir, global_dir),
     ]
     made = [p for p in written if p]
     if not made:
