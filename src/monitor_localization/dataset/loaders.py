@@ -215,8 +215,15 @@ def flatten_samples(
     return [Message.from_raw(raw) for _, _, _, raw in items]
 
 
-REDACTION = "[scaffolding log containing the system prompt — redacted]"
-MODEL_REDACTION = "[model]"
+# MALT already contains "[redacted]" in ordinary content (e.g. "The obscured
+# password is [redacted]"), so reusing it keeps our edits in-distribution.
+#
+# A descriptive marker would be worse than useless here: it would appear in only
+# 11 of 554 runs, 9 of them positive, telling the monitor both that something was
+# concealed and that concealment tracks the label. That trades one give-away for
+# another.
+REDACTION = "[redacted]"
+MODEL_REDACTION = "[redacted]"
 
 # Model identifiers leaked by the same scaffolding logs. Worth removing because
 # the identifier is near-perfectly correlated with the label: all 1045 prompted

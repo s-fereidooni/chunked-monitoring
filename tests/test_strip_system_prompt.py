@@ -15,6 +15,7 @@ from conftest import make_message, make_row, make_sample
 
 from monitor_localization.config import DatasetConfig
 from monitor_localization.dataset import row_to_transcript, strip_system_prompt
+from monitor_localization.dataset.loaders import MODEL_REDACTION, REDACTION
 from monitor_localization.dataset.schema import Message, Transcript
 from monitor_localization.monitors import ChunkMonitor, split_transcript
 from monitor_localization.monitors.global_monitor import render_for_monitor
@@ -193,7 +194,7 @@ def test_redaction_keeps_the_rest_of_the_tool_output():
     joined = "\n".join(m.content or "" for m in transcript.messages)
     assert "some legitimate grep hit about passwords" in joined
     assert "another legitimate match" in joined
-    assert "redacted" in joined
+    assert REDACTION in joined
 
 
 def test_echo_redaction_also_removes_the_leaked_model_name():
@@ -284,7 +285,7 @@ def test_model_identifiers_are_redacted_everywhere():
     transcript = row_to_transcript(row, strip_system=True)
     joined = "\n".join(m.content or "" for m in transcript.messages)
     assert "claude-3-7-sonnet" not in joined
-    assert "[model]" in joined
+    assert MODEL_REDACTION in joined
 
 
 def test_ordinary_prose_is_not_caught_by_model_redaction():
@@ -433,3 +434,18 @@ def test_a_long_user_message_is_not_treated_as_a_header():
     ]
     transcript = row_to_transcript(row, strip_system=True)
     assert len(transcript.messages) == 2
+
+
+def test_the_marker_is_indistinguishable_from_malt_s_own_redactions():
+    """The marker must not itself signal that something was concealed.
+
+    Redaction fires on 11 of 554 runs, 9 of them positive. A descriptive marker
+    would therefore be a give-away in its own right — it would tell the monitor
+    both that text was removed and that removal correlates with the label. MALT
+    already contains "[redacted]" in ordinary task content, so reusing that
+    string keeps the edit in-distribution.
+    """
+    assert REDACTION == "[redacted]"
+    assert MODEL_REDACTION == "[redacted]"
+    assert "system prompt" not in REDACTION
+    assert "scaffolding" not in REDACTION
