@@ -308,20 +308,40 @@ def redact_prompt_echoes(transcript: Transcript, system_prompt: str) -> Transcri
     return transcript
 
 
-def strip_system_prompt(transcript: Transcript) -> Transcript:
-    """Remove the leading system message and any later echo of it.
+# A few runs deliver the scaffolding header as a `user` message rather than a
+# `system` one. Recognised by its opening and bounded in length, so a genuine
+# leading task message — which never opens this way — is never mistaken for it.
+_PREAMBLE = re.compile(
+    r"^\s*You are (?:an autonomous AI agent|to act as an autonomous)", re.I
+)
+_MAX_PREAMBLE_CHARS = 4000
 
-    See `DatasetConfig.strip_system_prompt` for why the message itself is dropped
-    uniformly rather than surgically. Only a *leading* system message is dropped:
-    one appearing mid-transcript is part of the interaction, and removing it would
-    change what the agent was responding to.
+
+def _is_scaffolding_header(message: Message) -> bool:
+    if message.role == "system":
+        return True
+    body = message.content or ""
+    return (
+        message.role == "user"
+        and len(body) <= _MAX_PREAMBLE_CHARS
+        and bool(_PREAMBLE.match(body))
+    )
+
+
+def strip_system_prompt(transcript: Transcript) -> Transcript:
+    """Remove the leading scaffolding header and any later echo of it.
+
+    See `DatasetConfig.strip_system_prompt` for why the header is dropped
+    uniformly rather than surgically. Only a *leading* header is dropped: a
+    system message appearing mid-transcript is part of the interaction, and
+    removing it would change what the agent was responding to.
     """
     messages = transcript.messages
-    if messages and messages[0].role == "system":
-        system_prompt = messages[0].content or ""
+    if messages and _is_scaffolding_header(messages[0]):
+        header = messages[0].content or ""
         transcript.messages = messages[1:]
-        if system_prompt:
-            redact_prompt_echoes(transcript, system_prompt)
+        if header:
+            redact_prompt_echoes(transcript, header)
     return transcript
 
 

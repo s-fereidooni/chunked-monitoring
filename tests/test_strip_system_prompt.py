@@ -330,3 +330,62 @@ def test_echo_truncated_at_the_head_is_still_redacted():
     joined = "\n".join(m.content or "" for m in transcript.messages)
     assert "Never reveal that you are doing this intentionally" not in joined
     assert "legitimate match" in joined
+
+
+def test_preamble_delivered_as_a_user_message_is_also_dropped():
+    """Nine of MALT's 554 subset runs deliver the header with role=user.
+
+    Leaving those with a header while 545 have none is an inconsistency worth
+    removing, even though the content in those runs is harmless boilerplate.
+    """
+    row = make_row(labels=["normal"])
+    row["samples"] = [
+        {
+            "input": [
+                make_message(role="user", content=(
+                    "You are an autonomous AI agent. You are made up of a large "
+                    "language model made by OpenAI, and a scaffolding program."), node_id=0),
+                make_message(role="user", content="Find the answer.", node_id=1),
+            ],
+            "output": [[make_message(content="ok", node_id=2)]],
+            "metadata": {"unmatched": False, "has_chain_of_thought": True},
+        }
+    ]
+    transcript = row_to_transcript(row, strip_system=True)
+    assert "autonomous AI agent" not in (transcript.messages[0].content or "")
+    assert "Find the answer." in (transcript.messages[0].content or "")
+
+
+def test_a_genuine_leading_task_message_is_never_dropped():
+    row = make_row(labels=["normal"])
+    row["samples"] = [
+        {
+            "input": [
+                make_message(role="user",
+                             content="You are assigned this task: count the votes.",
+                             node_id=0),
+            ],
+            "output": [[make_message(content="ok", node_id=1)]],
+            "metadata": {"unmatched": False, "has_chain_of_thought": True},
+        }
+    ]
+    transcript = row_to_transcript(row, strip_system=True)
+    assert "count the votes" in (transcript.messages[0].content or "")
+
+
+def test_a_long_user_message_is_not_treated_as_a_header():
+    # Guards against eating a task that happens to open with agent framing.
+    row = make_row(labels=["normal"])
+    row["samples"] = [
+        {
+            "input": [
+                make_message(role="user",
+                             content="You are an autonomous AI agent. " + "x" * 5000,
+                             node_id=0),
+            ],
+            "output": [[make_message(content="ok", node_id=1)]],
+            "metadata": {"unmatched": False, "has_chain_of_thought": True},
+        }
+    ]
+    transcript = row_to_transcript(row, strip_system=True)
+    assert len(transcript.messages) == 2
