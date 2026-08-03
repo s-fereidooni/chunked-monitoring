@@ -559,6 +559,146 @@ def run_source(out: Path, fmt: str, baseline: Path) -> Path | None:
     return _save(fig, out / f"run_source.{fmt}")
 
 
+# --- failure modes ----------------------------------------------------------
+
+
+def positive_outcomes(out: Path, fmt: str, results: Path) -> Path | None:
+    """Complete accounting of every positive: caught, recovered, lost, missed.
+
+    Recall tables show what each arm caught; this shows what happens to the
+    *same* runs under both, which is the only view that makes the residual —
+    the runs neither arm detects — visible rather than implied.
+    """
+    path = results / "transitions.csv"
+    if not path.is_file():
+        return None
+    table = pd.read_csv(path).set_index("label")
+    for column in ("both_caught", "recovered", "lost", "both_missed"):
+        if column not in table:
+            table[column] = 0
+    table = table[table.index != "benign"]
+    table["total"] = table[["both_caught", "recovered", "lost", "both_missed"]].sum(axis=1)
+    table = table[table["total"] > 0].sort_values("both_missed")
+    if table.empty:
+        return None
+
+    fig, ax = plt.subplots(figsize=(7.6, 4.0))
+    series = [
+        ("both_caught", "#0B5E5D", "caught by both"),
+        ("recovered", CHUNK, "recovered by chunking"),
+        ("lost", POSITIVE, "lost by chunking"),
+        ("both_missed", "#CFC9C0", "missed by both"),
+    ]
+    left = np.zeros(len(table))
+    for column, color, label in series:
+        values = table[column].to_numpy(dtype=float)
+        ax.barh(range(len(table)), values, left=left, height=0.66, color=color,
+                edgecolor=PAPER, linewidth=1.4, label=label)
+        for i, (v, s) in enumerate(zip(values, left, strict=True)):
+            if v >= 4:
+                ax.annotate(f"{int(v)}", (s + v / 2, i), ha="center", va="center",
+                            fontsize=8.5, color=PAPER, fontweight="demibold")
+        left = left + values
+
+    ax.set_yticks(range(len(table)))
+    ax.set_yticklabels([_label(n) for n in table.index], fontsize=10.5)
+    ax.set_xlabel("positive runs", fontsize=9.5, labelpad=8)
+    ax.set_xlim(0, table["total"].max() * 1.02)
+    for tick in (0, 10, 20, 30, 40, 50):
+        if tick <= table["total"].max():
+            ax.axvline(tick, color=HAIRLINE, lw=0.8, zorder=0)
+    # Legend below the axes: the bars run the full width, so any in-axes
+    # placement covers data.
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=4,
+              fontsize=9, handlelength=1.2, columnspacing=1.6)
+
+    # Bars are per label, but a run carrying two labels appears in two rows, so
+    # summing the columns over-counts. The headline uses run-level counts.
+    paired_path = results / "paired.csv"
+    if paired_path.is_file():
+        paired = pd.read_csv(paired_path)
+        positives = paired[paired["is_positive"]]
+        missed = int((positives["transition"] == "both_missed").sum())
+        total = len(positives)
+    else:
+        missed, total = int(table["both_missed"].sum()), int(table["total"].sum())
+    _title(
+        ax,
+        f"{missed} of {total} positives are missed by both monitors",
+        "chunking converts partial detection into near-complete detection, but the\n"
+        "residual is dominated by labels neither architecture reaches",
+    )
+    return _save(fig, out / f"positive_outcomes.{fmt}")
+
+
+def failure_modes(out: Path, fmt: str, results: Path, baseline: Path,
+                  threshold: float) -> Path | None:
+    """What each arm's reasoning says on the runs it misses.
+
+    Read from per_sample.csv, which carries the monitor's own rationale, so the
+    categories are the monitor's stated grounds rather than an inference about
+    why it failed.
+    """
+    paths = {"global": baseline / "per_sample.csv", "chunk": results / "per_sample.csv"}
+    if not all(p.is_file() for p in paths.values()):
+        return None
+
+    themes = [
+        ("no evidence of intent",
+         r"no evidence of (intentional|deliberate)|no (clear )?(indication|sign)s? of intentional"),
+        ("good-faith effort",
+         r"good[- ]faith|genuine(ly)? (attempt|effort|trying)|sincere|earnest|diligent"),
+        ("reasonable / appropriate", r"reasonable|appropriate|justified|legitimate"),
+        ("cites an instruction", r"instruct|system prompt|told to|as directed"),
+        ("blames the environment",
+         r"environment|technical (limitation|issue|constraint)|resource constraint|timeout"),
+        ("task looks complete", r"complet(ed|es) the task|successfully|accomplish"),
+    ]
+    shares: dict[str, list[float]] = {}
+    counts: dict[str, int] = {}
+    for arm, path in paths.items():
+        frame = pd.read_csv(path)
+        fn = frame[(frame["is_positive"]) & (frame["score"] < threshold)]
+        text = fn["reasoning"].fillna("")
+        counts[arm] = len(fn)
+        shares[arm] = [
+            float(text.str.contains(pattern, case=False, regex=True).mean())
+            for _, pattern in themes
+        ]
+
+    fig, ax = plt.subplots(figsize=(7.6, 4.0))
+    y = np.arange(len(themes))
+    height = 0.36
+    ax.barh(y + height / 2, shares["global"], height, color=GLOBAL,
+            label=f"global ({counts['global']} misses)")
+    ax.barh(y - height / 2, shares["chunk"], height, color=CHUNK,
+            label=f"chunked ({counts['chunk']} misses)")
+    for i, (g, c) in enumerate(zip(shares["global"], shares["chunk"], strict=True)):
+        ax.annotate(f"{g:.0%}", (g, i + height / 2), xytext=(5, 0),
+                    textcoords="offset points", va="center", fontsize=8.5,
+                    color=GLOBAL_DARK)
+        ax.annotate(f"{c:.0%}", (c, i - height / 2), xytext=(5, 0),
+                    textcoords="offset points", va="center", fontsize=8.5, color=CHUNK)
+
+    ax.set_yticks(y)
+    ax.set_yticklabels([name for name, _ in themes], fontsize=10)
+    ax.invert_yaxis()
+    ax.set_xlim(0, 1.0)
+    ax.set_xticks([0, 0.25, 0.5, 0.75, 1.0])
+    ax.set_xticklabels(["0", "25%", "50%", "75%", "100%"])
+    for tick in (0, 0.25, 0.5, 0.75, 1.0):
+        ax.axvline(tick, color=HAIRLINE, lw=0.8, zorder=0)
+    ax.set_xlabel("share of that arm's false negatives whose rationale says this",
+                  fontsize=9.5, labelpad=8)
+    ax.legend(loc="lower right", fontsize=9, labelspacing=0.5, handlelength=1.2)
+    _title(
+        ax,
+        "Both monitors fail the same way: they call it a good-faith attempt",
+        "categories overlap, so shares do not sum to 100%",
+    )
+    return _save(fig, out / f"failure_modes.{fmt}")
+
+
 def _save(fig: plt.Figure, path: Path) -> Path:
     fig.savefig(path)
     plt.close(fig)
@@ -591,6 +731,9 @@ def main() -> int:
         recall_by_label(out, args.format, chunk_dir),
         aggregation(out, args.format, chunk_dir),
         score_scatter(out, args.format, chunk_dir, args.threshold),
+        # failure modes
+        positive_outcomes(out, args.format, chunk_dir),
+        failure_modes(out, args.format, chunk_dir, global_dir, args.threshold),
     ]
     made = [p for p in written if p]
     if not made:
