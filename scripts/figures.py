@@ -194,8 +194,17 @@ def recall_by_label(out: Path, fmt: str, results: Path) -> Path | None:
                 textcoords="offset points", ha="center", fontsize=9.5,
                 color=CHUNK, fontweight="demibold")
 
-    _title(ax, "Chunking moves three behaviours and leaves two at the floor",
-           "recall on 261 sandbagging runs · gpt-4.1-mini monitor · paired design")
+    # Derived from the data rather than written in: the counts changed between
+    # runs and a hardcoded headline silently went stale.
+    big = int((table["delta"] >= 0.20).sum())
+    floor = int((table["chunk_max"] < 0.15).sum())
+    n_positive = int(table["n"].sum()) if "n" in table else 0
+    _title(
+        ax,
+        f"Chunking transforms {big} behaviours and leaves {floor} at the floor",
+        f"recall on {n_positive} sandbagging runs · gpt-4.1-mini · "
+        f"elicitation prompt removed",
+    )
     return _save(fig, out / f"recall_by_label.{fmt}")
 
 
@@ -244,11 +253,17 @@ def aggregation(out: Path, fmt: str, results: Path) -> Path | None:
     ax.legend(handles=handles, loc="lower right", fontsize=9.5,
               handletextpad=0.4, borderpad=0.8, labelspacing=0.55)
 
+    # Earlier wording claimed this split the result into "localization" vs
+    # something else. That reading came from contaminated inputs: with the
+    # elicitation prompt in every chunk's context, uninformative chunks scored
+    # low-but-nonzero and dragged the mean to 0. On clean inputs the mean holds
+    # up for two of the three gaining labels, so the figure now says only what
+    # the data supports.
     _title(
         ax,
-        "Two failure modes hide behind one number",
-        "mean cannot exploit extra draws — where it collapses, evidence was local;\n"
-        "where it survives, the gain is something else entirely",
+        "Most of the gain survives a rule that cannot exploit extra draws",
+        "mean dilutes as chunks multiply, so where it still beats global the advantage\n"
+        "is not a draw-count artifact — refusals is the exception, resting wholly on max",
     )
     return _save(fig, out / f"aggregation.{fmt}")
 
@@ -553,6 +568,8 @@ def _save(fig: plt.Figure, path: Path) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="default")
+    parser.add_argument("--out-dir", type=Path, default=None,
+                        help="override the figures directory")
     parser.add_argument("--format", default="png", choices=("png", "pdf", "svg"))
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     args = parser.parse_args()
@@ -562,7 +579,7 @@ def main() -> int:
     cfg = ExperimentConfig.from_yaml(args.config)
     chunk_dir = ExperimentRun(cfg, stage="chunk").results_path.parent
     global_dir = ExperimentRun(cfg, stage="global").results_path.parent
-    out = chunk_dir.parent / "figures"
+    out = args.out_dir or (chunk_dir.parent / "figures")
     out.mkdir(parents=True, exist_ok=True)
 
     written = [
