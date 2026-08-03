@@ -125,14 +125,17 @@ def audit_reconstruction(audit: Audit, rows: dict[int, dict[str, Any]]) -> None:
     for run_id, row in rows.items():
         raw = _raw_signatures(row)
         messages = flatten_samples(row.get("samples") or [])
-        got = [(m.role, m.content or "") for m in messages]
-        got_set = set(got)
+        got_set = {(m.role, m.content or "") for m in messages}
         if raw - got_set:
             dropped.append((run_id, len(raw - got_set), len(raw)))
         if got_set - raw:
             invented.append((run_id, len(got_set - raw)))
-        if len(got) != len(got_set):
-            duplicated.append((run_id, len(got) - len(got_set), len(got)))
+        # Duplicates are keyed on the *rendered* form — what the monitor
+        # actually reads. Two tool calls with different arguments share empty
+        # content but render differently, so they are correctly distinct.
+        rendered = [m.render() for m in messages]
+        if len(rendered) != len(set(rendered)):
+            duplicated.append((run_id, len(rendered) - len(set(rendered)), len(rendered)))
 
     audit.check(
         not dropped, "reconstruction drops no source message",

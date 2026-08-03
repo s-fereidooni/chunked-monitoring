@@ -1,5 +1,5 @@
 import pytest
-from conftest import make_metadata, make_row, make_sample
+from conftest import make_message, make_metadata, make_row, make_sample
 
 from monitor_localization.config import SubsetConfig
 from monitor_localization.dataset import (
@@ -234,3 +234,48 @@ def test_empty_pool_raises():
     md = make_metadata(n_natural_positive=0, n_prompted_positive=0, n_negative=0, n_unreviewed=10)
     with pytest.raises(ValueError, match="No candidate runs"):
         build_subset(md, SubsetConfig(n_samples=10))
+
+
+def test_completion_reappearing_as_input_is_not_emitted_twice():
+    """Regression: 43% of the corpus was duplicated text.
+
+    In the growing-conversation shape the agent's completion at step N reappears
+    as an input at step N+1 carrying a *different* node_id. Inputs were deduped
+    by node_id alone, so the content guard never fired and the message landed in
+    the transcript twice.
+    """
+    reply = make_message(role="assistant", content="I will search the resources dir")
+    samples = [
+        {"input": [make_message(role="user", content="task", node_id=0)],
+         "output": [[dict(reply)]], "metadata": {}},
+        # Step 2 replays the conversation; the completion now carries a node_id.
+        {"input": [make_message(role="user", content="task", node_id=0),
+                   {**reply, "metadata": {"node_id": 1}},
+                   make_message(role="user", content="continue", node_id=2)],
+         "output": [[make_message(role="assistant", content="done")]], "metadata": {}},
+    ]
+    messages = flatten_samples(samples)
+    contents = [(m.role, m.content) for m in messages]
+    assert len(contents) == len(set(contents)), f"duplicates: {contents}"
+    assert contents.count(("assistant", "I will search the resources dir")) == 1
+
+
+def test_distinct_tool_calls_are_not_collapsed():
+    """Dedup keys on the tool call too, or every bash call merges into one.
+
+    Tool-call messages share empty content, so a (role, content) key alone would
+    treat two different commands as the same message.
+    """
+    samples = [{
+        "input": [make_message(role="user", content="go", node_id=0)],
+        "output": [[
+            make_message(role="assistant", content="", tool="bash", node_id=1),
+            make_message(role="assistant", content="", tool="bash", node_id=2),
+        ]],
+        "metadata": {},
+    }]
+    samples[0]["output"][0][0]["function_call"] = {"name": "bash", "arguments": '{"cmd":"ls"}'}
+    samples[0]["output"][0][1]["function_call"] = {"name": "bash", "arguments": '{"cmd":"pwd"}'}
+    messages = flatten_samples(samples)
+    calls = [m for m in messages if m.is_tool_call]
+    assert len(calls) == 2, f"distinct tool calls collapsed: {len(calls)}"

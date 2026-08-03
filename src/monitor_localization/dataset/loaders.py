@@ -126,6 +126,22 @@ def _node_id(raw: dict[str, Any]) -> int | None:
     return (raw.get("metadata") or {}).get("node_id")
 
 
+def _signature(raw: dict[str, Any]) -> tuple[str, str, str, str]:
+    """Identity of a message for deduplication.
+
+    The tool call is part of the identity: two distinct `bash` invocations both
+    have empty `content`, so keying on (role, content) alone would collapse every
+    tool call in a run into one.
+    """
+    call = raw.get("function_call") or {}
+    return (
+        raw.get("role") or "",
+        raw.get("content") or "",
+        call.get("name") or "",
+        call.get("arguments") or "",
+    )
+
+
 def flatten_samples(
     samples: Sequence[dict[str, Any]],
     strategy: FlattenStrategy = "dag",
@@ -177,7 +193,7 @@ def flatten_samples(
     # (sort_key, tier, sequence) keeps completions adjacent to their input.
     items: list[tuple[float, int, int, dict[str, Any]]] = []
     seen_nodes: set[int] = set()
-    seen_content: set[tuple[str, str]] = set()
+    seen_content: set[tuple[str, str, str, str]] = set()
     fallback = 0
 
     for sample in samples:
@@ -196,14 +212,22 @@ def flatten_samples(
                     continue
                 seen_nodes.add(node)
             last_key = key
+            # Content check on inputs too, not just outputs. In the growing
+            # conversation shape a completion reappears as the next sample's
+            # input carrying a *different* node_id, so a node-only check lets it
+            # through and the message is emitted twice. That inflated 43% of the
+            # corpus before this guard existed.
+            signature = _signature(raw)
+            if signature in seen_content:
+                continue
+            seen_content.add(signature)
             items.append((key, 0, 0, raw))
-            seen_content.add((raw.get("role") or "", raw.get("content") or ""))
 
         anchor = last_key if last_key is not None else float(fallback)
         for offset, raw in enumerate(_first_choice(sample)):
             if not isinstance(raw, dict):
                 continue
-            signature = (raw.get("role") or "", raw.get("content") or "")
+            signature = _signature(raw)
             # A completion that reappears as a later sample's input would
             # otherwise be emitted twice.
             if signature in seen_content:
