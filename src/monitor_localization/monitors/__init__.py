@@ -27,5 +27,6 @@ __all__ = [
     "aggregate_with_evidence",
     "chunk_count",
     "render_for_monitor",
+    "render_with_context",
     "split_transcript",
 ]

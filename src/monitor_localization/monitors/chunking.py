@@ -18,6 +18,38 @@ from monitor_localization.config import ChunkConfig
 from monitor_localization.dataset.schema import Message, Transcript
 
 
+def render_with_context(context: list[Message], body: list[Message]) -> str:
+    """METR's MALT layout, used by BOTH arms so they differ only by chunking.
+
+    Two asymmetries lived here before this was shared:
+
+    1. The global arm emitted `<first_few_messages>` *and* the whole transcript,
+       so its opening five messages appeared twice — it read the head twice
+       while a chunked monitor read it once per chunk.
+    2. Chunk 0 already contains the opening messages, so its context was
+       suppressed and it rendered an empty block, while the global arm always
+       rendered a populated one. A prompt-shape difference between the arms that
+       is not the chunking under study.
+
+    Both are resolved by one rule applied everywhere: the context block appears
+    only when it carries messages the body does not. The global arm is then
+    exactly the single-chunk case, which is also the cleanest control for the
+    draw-count objection.
+
+    No message indices anywhere: they would be a position cue one arm has and
+    the other does not.
+    """
+    rendered_body = "\n\n".join(m.render() for m in body)
+    if not context:
+        return f"<transcript_chunk>\n{rendered_body}\n</transcript_chunk>"
+    head = "\n\n".join(m.render() for m in context)
+    return (
+        f"<first_few_messages>\n{head}\n</first_few_messages>\n"
+        f"...\n"
+        f"<transcript_chunk>\n{rendered_body}\n</transcript_chunk>"
+    )
+
+
 @dataclass(slots=True)
 class Chunk:
     """One excerpt, plus the repeated opening context it is shown with."""
@@ -33,20 +65,8 @@ class Chunk:
         return len(self.messages)
 
     def render(self) -> str:
-        """Format for the monitor, in METR's MALT layout.
-
-        Identical structure to the global condition's rendering, so the only
-        difference between the two arms is what fills `<transcript_chunk>`. No
-        message indices are included: they would be a position cue the global
-        monitor does not get.
-        """
-        head = "\n\n".join(m.render() for m in self.context)
-        body = "\n\n".join(m.render() for m in self.messages)
-        return (
-            f"<first_few_messages>\n{head}\n</first_few_messages>\n"
-            f"...\n"
-            f"<transcript_chunk>\n{body}\n</transcript_chunk>"
-        )
+        """Format for the monitor, in METR's MALT layout."""
+        return render_with_context(self.context, self.messages)
 
     def as_dict(self) -> dict[str, Any]:
         return {

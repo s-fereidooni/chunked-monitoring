@@ -299,3 +299,31 @@ def test_row_to_transcript_integration(tmp_path):
     result = ChunkMonitor(client=client).judge(row_to_transcript(make_row(run_id=99)))
     assert result.run_id == 99
     assert result.metadata["n_chunks"] >= 1
+
+
+def test_both_arms_use_the_same_layout_rule():
+    """The arms must differ by chunking alone, not by prompt shape.
+
+    Previously the global arm emitted <first_few_messages> *and* the whole
+    transcript, so it read its opening five messages twice, while chunk 0 —
+    which already contains them — rendered an empty block. Two prompt
+    differences that were not the variable under study.
+    """
+    from monitor_localization.monitors.global_monitor import render_for_monitor
+
+    t = transcript(45)
+    rendered = render_for_monitor(t)
+    assert rendered.count("m0") == 1, "global arm reads its opening twice"
+    assert "<first_few_messages>" not in rendered
+
+    chunks = split_transcript(t, ChunkConfig(size=20, context_messages=5))
+    assert "<first_few_messages>" not in chunks[0].render()
+    assert chunks[0].render().count("m0") == 1
+    # Later chunks do not contain the opening, so they carry it as context.
+    assert "<first_few_messages>" in chunks[1].render()
+    assert chunks[1].render().count("m0") == 1
+
+
+def test_no_empty_context_block_is_ever_emitted():
+    chunks = split_transcript(transcript(8), ChunkConfig(size=20, context_messages=5))
+    assert "<first_few_messages>\n\n</first_few_messages>" not in chunks[0].render()

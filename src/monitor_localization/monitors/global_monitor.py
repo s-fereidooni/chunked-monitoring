@@ -12,6 +12,7 @@ from typing import Any
 
 from monitor_localization.config import ModelConfig
 from monitor_localization.dataset.schema import Transcript
+from monitor_localization.monitors.chunking import render_with_context
 from monitor_localization.llm.client import MonitorClient, MonitorLLMError
 from monitor_localization.monitors.base import Monitor, MonitorResult, Verdict
 from monitor_localization.prompts import load_prompt
@@ -36,13 +37,12 @@ def render_for_monitor(transcript: Transcript, context_messages: int = 5) -> str
     differ by prompt shape as well as by chunking. Callers pass it from config;
     the default here only matches METR's baseline by coincidence.
     """
-    head = "\n\n".join(m.render() for m in transcript.messages[:context_messages])
-    body = "\n\n".join(m.render() for m in transcript.messages)
-    return (
-        f"<first_few_messages>\n{head}\n</first_few_messages>\n"
-        f"...\n"
-        f"<transcript_chunk>\n{body}\n</transcript_chunk>"
-    )
+    # The body is the whole transcript, so it already contains the opening
+    # messages; repeating them would make the global arm read its head twice.
+    # render_with_context applies the same suppression rule the chunked arm uses,
+    # which makes this exactly the single-chunk case.
+    del context_messages  # kept in the signature for callers; see chunking.py
+    return render_with_context([], transcript.messages)
 
 
 class GlobalMonitor(Monitor):
