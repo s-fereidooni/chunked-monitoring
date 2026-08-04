@@ -36,11 +36,18 @@ def make_message(
     }
 
 
-def make_sample(n_input: int, output_content: str = "done") -> dict[str, Any]:
-    """One (input, output) pair. `output` is list-of-choices, each a message list."""
+def make_sample(n_input: int, output_content: str | None = None) -> dict[str, Any]:
+    """One (input, output) pair. `output` is list-of-choices, each a message list.
+
+    The completion is distinct per sample by default. A shared literal here once
+    hid a real bug: three samples all completing with "done" collapsed to one
+    message under a content-keyed dedup, and the test asserted the collapsed
+    count as correct.
+    """
+    content = output_content if output_content is not None else f"done {n_input}"
     return {
         "input": [make_message(content=f"msg {i}", node_id=i) for i in range(n_input)],
-        "output": [[make_message(content=output_content, node_id=n_input)]],
+        "output": [[make_message(content=content, node_id=n_input)]],
         "metadata": {"unmatched": False, "has_chain_of_thought": True},
     }
 

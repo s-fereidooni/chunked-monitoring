@@ -105,14 +105,16 @@ def test_flatten_uses_widest_input_plus_its_completion():
     messages = flatten_samples(samples, strategy="longest_input")
     # Widest input has 5 messages, plus one completion message.
     assert len(messages) == 6
-    assert messages[-1].content == "done"
+    assert messages[-1].content.startswith("done")
 
 
 def test_flatten_does_not_duplicate_the_shared_prefix():
     # Each sample's input contains every earlier message, so naively concatenating
-    # inputs would repeat the prefix. 3 samples of width 1..3 -> 3 + 1, not 6 + 3.
+    # inputs would repeat the prefix. 3 samples of width 1..3 -> 3 inputs + 3
+    # distinct completions, not 6 + 3.
     messages = flatten_samples([make_sample(n_input=n) for n in (1, 2, 3)])
-    assert len(messages) == 4
+    assert len(messages) == 6
+    assert sum(1 for m in messages if (m.content or "").startswith("done")) == 3
 
 
 def test_flatten_concat_all_appends_every_completion():
@@ -279,3 +281,50 @@ def test_distinct_tool_calls_are_not_collapsed():
     messages = flatten_samples(samples)
     calls = [m for m in messages if m.is_tool_call]
     assert len(calls) == 2, f"distinct tool calls collapsed: {len(calls)}"
+
+
+def test_a_repeated_command_is_kept():
+    """Repetition is behavioural evidence, not a duplicate.
+
+    An agent retrying the same failing command is the signal for `gives_up`, and
+    re-issuing the same refusal is the signal for `refusals`. A run-wide
+    "seen this content" set suppresses the node_id echo *and* every genuine
+    recurrence, so the guard is a multiset consumed once per emitted completion.
+    """
+    from monitor_localization.dataset import flatten_samples
+
+    def call(node_id=None):
+        m = make_message(role="assistant", content="", tool="bash")
+        m["function_call"] = {"name": "bash", "arguments": '{"cmd":"ls"}'}
+        if node_id is not None:
+            m["metadata"]["node_id"] = node_id
+        return m
+
+    samples = [
+        {"input": [make_message(role="user", content="task", node_id=0)],
+         "output": [[call()]], "metadata": {}},
+        {"input": [make_message(role="user", content="task", node_id=0),
+                   call(node_id=1),
+                   make_message(role="function", content="a.py", node_id=2)],
+         "output": [[call()]], "metadata": {}},
+    ]
+    messages = flatten_samples(samples)
+    calls = [m for m in messages if m.is_tool_call]
+    assert len(calls) == 2, f"a genuine repeat was swallowed: {len(calls)} of 2"
+    assert len(messages) == 4
+
+
+def test_the_node_id_echo_is_still_suppressed():
+    """The narrow case the guard exists for must still work."""
+    from monitor_localization.dataset import flatten_samples
+
+    reply = make_message(role="assistant", content="only once")
+    samples = [
+        {"input": [make_message(role="user", content="task", node_id=0)],
+         "output": [[dict(reply)]], "metadata": {}},
+        {"input": [make_message(role="user", content="task", node_id=0),
+                   {**reply, "metadata": {"node_id": 1}}],
+         "output": [[make_message(role="assistant", content="second")]], "metadata": {}},
+    ]
+    contents = [m.content for m in flatten_samples(samples)]
+    assert contents.count("only once") == 1, contents

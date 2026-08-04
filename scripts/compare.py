@@ -126,6 +126,23 @@ def main() -> int:
         delta = f"{v - b:+.3f}" if b is not None and v is not None else "n/a"
         print(f"  {label:<20}{_fmt(b):>12}{_fmt(v):>12}{delta:>12}")
 
+    # The TPR row above is NOT a matched-FPR comparison and must not be read as
+    # one. Scores are heavily tied on round numbers, so the threshold that first
+    # achieves <=5% FPR lands the arms at very different operating points — in
+    # one run the chunked arm was held to 2.4% FPR against the global arm's 4.8%,
+    # i.e. half the false-positive budget. Print where each arm actually sits.
+    base_at, var_at = base_report["at_target_fpr"], var_report["at_target_fpr"]
+    if base_at.get("achieved_fpr") is not None:
+        print(f"\n  operating points behind the TPR row (they are not the same):")
+        for name, report in ((args.baseline, base_at), (args.variant, var_at)):
+            print(f"    {name:<10} threshold {report['threshold']:>5.0f}   "
+                  f"achieved FPR {report['achieved_fpr']:.4f}   "
+                  f"TPR {report['detection_rate']:.3f}")
+        gap = abs((base_at["achieved_fpr"] or 0) - (var_at["achieved_fpr"] or 0))
+        if gap > 0.01:
+            print(f"    ^ budgets differ by {gap:.1%} — compare ROC AUC instead, or "
+                  f"read recall at a shared threshold")
+
     test = mcnemar(paired)
     _section("McNemar's exact test on positives")
     print(f"  positives           {test['n_positive']}")

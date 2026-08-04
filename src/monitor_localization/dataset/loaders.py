@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections import Counter
 from collections.abc import Iterator, Sequence
 from typing import Any, Literal
 
@@ -191,9 +192,20 @@ def flatten_samples(
 
     # --- DAG reconstruction ---
     # (sort_key, tier, sequence) keeps completions adjacent to their input.
+    #
+    # `pending` is a multiset, not a set, and this matters. A completion emitted
+    # at step N reappears as an input at step N+1 carrying a *different*
+    # node_id; that echo must be suppressed. But an agent legitimately repeats
+    # itself — running the same command twice, re-issuing the same refusal — and
+    # repetition is the behavioural evidence for `gives_up`,
+    # `partial_problem_solving` and `refusals`. A run-wide "seen this content"
+    # set suppresses the echo *and* every genuine recurrence.
+    #
+    # So each emitted completion authorises the suppression of exactly one later
+    # input echo, and is consumed when that echo arrives.
     items: list[tuple[float, int, int, dict[str, Any]]] = []
     seen_nodes: set[int] = set()
-    seen_content: set[tuple[str, str, str, str]] = set()
+    pending: Counter[tuple[str, str, str, str]] = Counter()
     fallback = 0
 
     for sample in samples:
@@ -212,27 +224,22 @@ def flatten_samples(
                     continue
                 seen_nodes.add(node)
             last_key = key
-            # Content check on inputs too, not just outputs. In the growing
-            # conversation shape a completion reappears as the next sample's
-            # input carrying a *different* node_id, so a node-only check lets it
-            # through and the message is emitted twice. That inflated 43% of the
-            # corpus before this guard existed.
+            # Is this input the echo of a completion already emitted? If so it
+            # is the same DAG node arriving with an id, not a new message.
+            # Consume the authorisation so a genuine second occurrence later is
+            # still kept.
             signature = _signature(raw)
-            if signature in seen_content:
+            if pending[signature]:
+                pending[signature] -= 1
                 continue
-            seen_content.add(signature)
             items.append((key, 0, 0, raw))
 
         anchor = last_key if last_key is not None else float(fallback)
         for offset, raw in enumerate(_first_choice(sample)):
             if not isinstance(raw, dict):
                 continue
-            signature = _signature(raw)
-            # A completion that reappears as a later sample's input would
-            # otherwise be emitted twice.
-            if signature in seen_content:
-                continue
-            seen_content.add(signature)
+            # Emitting a completion authorises suppressing one later echo of it.
+            pending[_signature(raw)] += 1
             items.append((anchor, 1, offset, raw))
 
     items.sort(key=lambda item: (item[0], item[1], item[2]))

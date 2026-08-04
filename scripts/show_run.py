@@ -107,29 +107,45 @@ def main() -> int:
         run_id = int(pool.nlargest(1, "delta").iloc[0]["run_id"])
         print(f"(no run_id given — showing the largest recovery, run {run_id})")
 
-    transcripts = load_transcripts([run_id])
+    # cfg= is required or the loader falls back to DatasetConfig() defaults and
+    # silently ignores strip_system_prompt — the same omission that once made a
+    # whole experiment a no-op. --stripped overrides whatever the config says.
+    dataset_cfg = cfg.dataset.model_copy(
+        update={"strip_system_prompt": True} if args.stripped else {}
+    )
+    transcripts = load_transcripts([run_id], cfg=dataset_cfg)
     if not transcripts:
         print(f"Run {run_id} not found in the dataset.")
         return 1
     transcript = transcripts[0]
 
+    stream = args.out.open("w") if args.out else None
+    redirect = None
+    if stream is not None:
+        import contextlib
+
+        redirect = contextlib.redirect_stdout(stream)
+        redirect.__enter__()
+
     _section(f"run {run_id}")
+    print(f"  preprocessing  strip_system_prompt={dataset_cfg.strip_system_prompt}")
     print(f"  labels        {', '.join(transcript.labels) or 'normal'}")
     print(f"  run_source    {transcript.run_source}")
     print(f"  model         {transcript.model}")
     print(f"  messages      {transcript.n_messages}")
     print(f"  characters    {transcript.n_characters:,} (~{transcript.n_characters / 4.4:,.0f} tokens)")
 
-    for index in range(min(args.messages, transcript.n_messages)):
+    count = transcript.n_messages if args.all else min(args.messages, transcript.n_messages)
+    cap = None if args.all else args.chars
+    for index in range(count):
         message = transcript.messages[index]
         body = message.content or ""
         hits = list(DIRECTIVE.finditer(body))
         _section(f"message {index} · role={message.role} · {len(body):,} chars"
                  f" · {len(hits)} directive phrase(s)")
-        shown = body[: args.chars]
-        print(_wrap(shown))
-        if len(body) > args.chars:
-            print(f"\n  … {len(body) - args.chars:,} more characters (raise --chars)")
+        print(_wrap(body if cap is None else body[:cap]))
+        if cap is not None and len(body) > cap:
+            print(f"\n  … {len(body) - cap:,} more characters (raise --chars or use --all)")
         if hits:
             print(f"\n  directive phrases matched in this message:")
             for hit in hits[:12]:
@@ -151,6 +167,12 @@ def main() -> int:
             continue
         print(f"\n  {name}  score {row['score']}")
         print(_wrap(row.get("reasoning") or "(none)", indent="    "))
+
+    if redirect is not None:
+        redirect.__exit__(None, None, None)
+        stream.close()
+        print(f"wrote run {run_id} ({transcript.n_messages} messages, "
+              f"{transcript.n_characters:,} chars) to {args.out}")
     return 0
 
 

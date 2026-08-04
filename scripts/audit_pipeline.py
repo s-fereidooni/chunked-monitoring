@@ -98,21 +98,57 @@ def _raw_rows(run_ids: set[int], cfg) -> dict[int, dict[str, Any]]:
     return found
 
 
-def _raw_signatures(row: dict[str, Any]) -> set[tuple[str, str]]:
-    """Every distinct (role, content) present anywhere in the raw row."""
-    signatures: set[tuple[str, str]] = set()
+def _msg_key(message: dict[str, Any]) -> tuple[str, str, str, str]:
+    call = message.get("function_call") or {}
+    return (
+        message.get("role") or "",
+        message.get("content") or "",
+        call.get("name") or "",
+        call.get("arguments") or "",
+    )
+
+
+def _raw_expected(row: dict[str, Any]) -> Counter[tuple[str, str, str, str]]:
+    """How many times each distinct message *should* appear in the transcript.
+
+    Counted as a multiset, not a set. A set cannot see the difference between a
+    message legitimately occurring three times and a deduplicator collapsing it
+    to one — which is exactly the failure a content-keyed guard introduces.
+
+    The expected multiplicity of a message is:
+      (times it appears as a completion)  +  (times it appears as an input whose
+      node_id was never emitted as a completion)
+    Because in the growing-conversation shape each completion reappears as a
+    later input, counting both would double it. So inputs are counted by
+    *distinct node_id*, and completions by occurrence, minus the overlap.
+    """
+    completions: Counter[tuple[str, str, str, str]] = Counter()
+    by_node: dict[int, tuple[str, str, str, str]] = {}
+    no_node: Counter[tuple[str, str, str, str]] = Counter()
+
     for sample in row.get("samples") or []:
         for message in sample.get("input") or []:
-            if isinstance(message, dict):
-                signatures.add((message.get("role") or "", message.get("content") or ""))
+            if not isinstance(message, dict):
+                continue
+            node = (message.get("metadata") or {}).get("node_id")
+            if node is None:
+                no_node[_msg_key(message)] += 1
+            else:
+                by_node[node] = _msg_key(message)
         output = sample.get("output") or []
         first = output[0] if output else []
         if isinstance(first, dict):
             first = output
         for message in first or []:
             if isinstance(message, dict):
-                signatures.add((message.get("role") or "", message.get("content") or ""))
-    return signatures
+                completions[_msg_key(message)] += 1
+
+    inputs = Counter(by_node.values()) + no_node
+    # An input that echoes a completion is the same node; count it once.
+    expected = Counter()
+    for key in set(inputs) | set(completions):
+        expected[key] = max(inputs[key], completions[key])
+    return expected
 
 
 def audit_reconstruction(audit: Audit, rows: dict[int, dict[str, Any]]) -> None:
@@ -121,37 +157,45 @@ def audit_reconstruction(audit: Audit, rows: dict[int, dict[str, Any]]) -> None:
     Reconstruction must be a bijection with the raw row's distinct messages:
     nothing dropped, nothing invented, nothing repeated.
     """
-    dropped, invented, duplicated = [], [], []
+    dropped, invented, undercount, overcount = [], [], [], []
     for run_id, row in rows.items():
-        raw = _raw_signatures(row)
-        messages = flatten_samples(row.get("samples") or [])
-        got_set = {(m.role, m.content or "") for m in messages}
-        if raw - got_set:
-            dropped.append((run_id, len(raw - got_set), len(raw)))
-        if got_set - raw:
-            invented.append((run_id, len(got_set - raw)))
-        # Duplicates are keyed on the *rendered* form — what the monitor
-        # actually reads. Two tool calls with different arguments share empty
-        # content but render differently, so they are correctly distinct.
-        rendered = [m.render() for m in messages]
-        if len(rendered) != len(set(rendered)):
-            duplicated.append((run_id, len(rendered) - len(set(rendered)), len(rendered)))
+        expected = _raw_expected(row)
+        got = Counter(_msg_key({"role": m.role, "content": m.content,
+                                "function_call": m.function_call}) for m in
+                      flatten_samples(row.get("samples") or []))
+        missing_kinds = set(expected) - set(got)
+        extra_kinds = set(got) - set(expected)
+        if missing_kinds:
+            dropped.append((run_id, len(missing_kinds), len(expected)))
+        if extra_kinds:
+            invented.append((run_id, len(extra_kinds)))
+        # Multiplicity, the part a set-based check cannot see.
+        short = sum(max(expected[k] - got[k], 0) for k in expected)
+        long = sum(max(got[k] - expected[k], 0) for k in got)
+        if short:
+            undercount.append((run_id, short, sum(expected.values())))
+        if long:
+            overcount.append((run_id, long, sum(got.values())))
 
     audit.check(
-        not dropped, "reconstruction drops no source message",
-        f"{len(dropped)}/{len(rows)} runs lose content"
-        + (f", worst {max(dropped, key=lambda x: x[1])[1]} of "
-           f"{max(dropped, key=lambda x: x[1])[2]}" if dropped else ""),
+        not dropped, "reconstruction drops no kind of message",
+        f"{len(dropped)}/{len(rows)} runs lose content entirely",
     )
     audit.check(
         not invented, "reconstruction invents no message",
         f"{len(invented)}/{len(rows)} runs contain content absent from the raw row",
     )
     audit.check(
-        not duplicated, "no message emitted twice",
-        f"{len(duplicated)}/{len(rows)} runs contain duplicates"
-        + (f", worst {max(duplicated, key=lambda x: x[1])[1]} of "
-           f"{max(duplicated, key=lambda x: x[1])[2]} messages" if duplicated else ""),
+        not undercount, "repeated messages are kept, not collapsed",
+        f"{len(undercount)}/{len(rows)} runs have fewer occurrences than the source"
+        + (f", worst {max(undercount, key=lambda x: x[1])[1]} missing of "
+           f"{max(undercount, key=lambda x: x[1])[2]}" if undercount else ""),
+    )
+    audit.check(
+        not overcount, "no message emitted more often than the source has it",
+        f"{len(overcount)}/{len(rows)} runs over-emit"
+        + (f", worst {max(overcount, key=lambda x: x[1])[1]} extra of "
+           f"{max(overcount, key=lambda x: x[1])[2]}" if overcount else ""),
     )
 
 
@@ -183,9 +227,16 @@ def audit_chunking(audit: Audit, transcripts: list, cfg) -> None:
         covered = [i for c in chunks for i in range(c.start, c.end)]
         if cfg.chunk.overlap == 0 and covered != list(range(len(t.messages))):
             bad_cover.append(t.run_id)
-        # Context is the opening messages; it must never be the chunk's own body.
+        # Real check: no message may appear twice inside one rendered chunk.
+        # (The former version tested `chunk.start < len(chunk.context)`, which
+        # chunking.py guarantees false by construction — a tautology, not a
+        # check.)
         for chunk in chunks:
-            if chunk.context and chunk.start < len(chunk.context):
+            if not chunk.context:
+                continue
+            context_rendered = {m.render() for m in chunk.context}
+            body_rendered = {m.render() for m in chunk.messages}
+            if context_rendered & body_rendered:
                 bad_context.append(t.run_id)
                 break
     audit.check(
