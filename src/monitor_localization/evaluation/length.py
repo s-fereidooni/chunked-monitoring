@@ -132,8 +132,12 @@ def fpr_by_length_decile(
     monitoring with max aggregation takes the highest of many more draws on long
     transcripts, so it should amplify any such trend.
     """
-    frame = add_length_columns(table)
-    benign = frame[(~frame["is_positive"]) & frame["tokens"].notna()].copy()
+    # Decile over the benign rows themselves. add_length_columns bins across all
+    # runs, so filtering to benign afterwards left bins holding 11-50 runs — not
+    # deciles of anything the table reports.
+    frame = table[~table["is_positive"]].copy()
+    benign = add_length_columns(frame)
+    benign = benign[benign["tokens"].notna()].copy()
     if benign.empty:
         return pd.DataFrame(columns=["length_decile", "n", "median_tokens", "n_flagged", "fpr"])
     benign["flagged"] = benign["score"] >= threshold

@@ -207,6 +207,7 @@ def flatten_samples(
     seen_nodes: set[int] = set()
     pending: Counter[tuple[str, str, str, str]] = Counter()
     fallback = 0
+    highest = 0.0  # largest ordering key assigned so far
 
     for sample in samples:
         inputs = [m for m in (sample.get("input") or []) if isinstance(m, dict)]
@@ -214,15 +215,21 @@ def flatten_samples(
         for raw in inputs:
             node = _node_id(raw)
             if node is None:
-                # No DAG id: keep positionally, after everything seen so far.
+                # No DAG id: place it after everything ordered so far. A bare
+                # counter shares a numeric space with real node_ids, so ties
+                # would resolve arbitrarily; deriving the key from the running
+                # maximum both avoids collision and implements the intent.
+                # (Unreachable on MALT as released — 0 of 32,023 input messages
+                # sampled lack a node_id — but cheap to get right.)
                 fallback += 1
-                key = float(fallback)
+                key = highest + float(fallback)
             else:
                 key = float(node)
                 if node in seen_nodes:
                     last_key = key
                     continue
                 seen_nodes.add(node)
+            highest = max(highest, key)
             last_key = key
             # Is this input the echo of a completion already emitted? If so it
             # is the same DAG node arriving with an id, not a new message.

@@ -158,7 +158,19 @@ class Transcript:
 
     @property
     def n_characters(self) -> int:
-        return sum(len(m.content or "") for m in self.messages)
+        """Length of the transcript *as rendered*, which is what the monitor reads.
+
+        Summing `content` alone omits tool calls, which `Message.render()`
+        appends as `tool_call: name(arguments)`. That understated length by 23%
+        overall and — worse for a confound control — unevenly by label: 13% for
+        prose-heavy `refusals` against 41% for tool-heavy `gives_up`. Since this
+        feeds every length analysis, the bias ran along the axis the analysis
+        exists to control for.
+
+        Defined as `len(self.render())` so there is exactly one notion of length
+        in the codebase; `subset.apply_length_cap` already used that one.
+        """
+        return len(self.render())
 
     def render(self, separator: str = "\n\n---\n\n") -> str:
         """Full transcript as text, for the global monitor."""

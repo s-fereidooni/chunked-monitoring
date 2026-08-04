@@ -198,7 +198,13 @@ def recall_by_label(out: Path, fmt: str, results: Path) -> Path | None:
     # runs and a hardcoded headline silently went stale.
     big = int((table["delta"] >= 0.20).sum())
     floor = int((table["chunk_max"] < 0.15).sum())
-    n_positive = int(table["n"].sum()) if "n" in table else 0
+    # Rows are per label, so summing n double-counts multi-label runs and omits
+    # labels below the reporting floor. Take the run-level count instead.
+    paired_path = results / "paired.csv"
+    n_positive = 0
+    if paired_path.is_file():
+        paired = pd.read_csv(paired_path)
+        n_positive = int(paired["is_positive"].sum())
     _title(
         ax,
         f"Chunking transforms {big} behaviours and leaves {floor} at the floor",
@@ -334,8 +340,14 @@ def score_scatter(out: Path, fmt: str, results: Path, threshold: float) -> Path 
     ax.legend(loc="upper left", bbox_to_anchor=(0.50, 0.42), fontsize=9.5,
               handletextpad=0.3, markerscale=1.7, labelspacing=0.5)
 
+    from scipy import stats as _stats
+
+    discordant = recovered + len(lost)
+    pvalue = (_stats.binomtest(recovered, discordant, 0.5).pvalue
+              if discordant else 1.0)
+    shown = "< 0.0001" if pvalue < 0.0001 else f"= {pvalue:.4f}"
     _title(ax, "Every run, scored twice",
-           f"{len(paired)} transcripts · threshold {threshold:g} · McNemar p < 0.0001")
+           f"{len(paired)} transcripts · threshold {threshold:g} · McNemar p {shown}")
     return _save(fig, out / f"score_scatter.{fmt}")
 
 
@@ -406,8 +418,16 @@ def fpr_by_length(out: Path, fmt: str, results: Path, baseline: Path) -> Path | 
 
 
 def _primary_label(frame: pd.DataFrame) -> pd.Series:
-    return frame["labels"].fillna("normal").str.split(";").str[0].replace(
-        {"normal": "benign"}
+    """One label per run, chosen deterministically.
+
+    Taking `.str[0]` made the bucket depend on MALT's storage order: the data
+    holds both `gives_up;reasoning_about_task` and `reasoning_about_task;gives_up`,
+    so identical runs landed in different buckets. Sorting makes it stable.
+    """
+    return (
+        frame["labels"].fillna("normal")
+        .apply(lambda s: sorted(x for x in str(s).split(";") if x)[0] if s else "normal")
+        .replace({"normal": "benign"})
     )
 
 
@@ -471,8 +491,10 @@ def length_composition(out: Path, fmt: str, results: Path) -> Path | None:
     if not path.is_file():
         return None
     table = pd.read_csv(path).set_index("label")
-    table = table[table.sum(axis=1) >= 5]
+    # Normalise BEFORE dropping small labels, or the remaining shares no longer
+    # sum to the quartile and the axis label becomes false.
     shares = table.div(table.sum(axis=0), axis=1)
+    shares = shares[table.sum(axis=1) >= 5]
     order = shares.mean(axis=1).sort_values(ascending=False).index.tolist()
 
     palette = [CHUNK, MEAN, POSITIVE, "#6B8E9E", GLOBAL_DARK, "#A8B5A0"]

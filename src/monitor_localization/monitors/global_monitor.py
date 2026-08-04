@@ -31,6 +31,10 @@ def render_for_monitor(transcript: Transcript, context_messages: int = 5) -> str
     No task_id or message-count header: those are metadata the monitor would not
     have in deployment, and a message count is a length cue we do not want
     influencing a comparison where length is already a confound.
+
+    `context_messages` must match `ChunkConfig.context_messages`, or the two arms
+    differ by prompt shape as well as by chunking. Callers pass it from config;
+    the default here only matches METR's baseline by coincidence.
     """
     head = "\n\n".join(m.render() for m in transcript.messages[:context_messages])
     body = "\n\n".join(m.render() for m in transcript.messages)
