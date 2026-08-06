@@ -353,11 +353,17 @@ def score_scatter(out: Path, fmt: str, results: Path, threshold: float) -> Path 
     # Headline states the finding, like every other figure here, and is derived
     # so it cannot go stale: the movement is almost entirely one-way, and the
     # benign cloud does not move at all.
+    # Three variables are plotted — global score, chunked score, and ground
+    # truth as colour — so the headline names all three: which class moved, in
+    # which direction, and that the other class did not move at all. A purely
+    # descriptive title ("score by monitor type") would spend the most-read line
+    # restating the axis labels.
+    crossings = f"{len(lost)} crosses back" if len(lost) == 1 else f"{len(lost)} cross back"
     _title(
         ax,
-        f"{recovered} runs cross the threshold upward, {len(lost)} back down",
-        f"{len(paired)} transcripts · threshold {threshold:g} · McNemar p {shown} · "
-        f"benign flagged {benign_flagged}/{n_benign}",
+        f"{recovered} sandbagging runs cross the threshold; benign scores stay put",
+        f"{len(paired)} transcripts · threshold {threshold:g} · {crossings} · "
+        f"benign flagged {benign_flagged}/{n_benign} · McNemar p {shown}",
     )
     return _save(fig, out / f"score_scatter.{fmt}")
 
