@@ -1,0 +1,83 @@
+# Sandbagging, chunked vs global — elicitation prompt removed AND the
+# reconstruction/rendering bugs fixed.
+#
+# Same subset, seed, quotas, model, chunk size and METR prompts as every previous
+# run. Only the pipeline beneath them changed, so this is the first run whose
+# inputs are believed correct. Results go to `results/sandbagging-fixed/`;
+# `sandbagging-global` (elicitation prompt included) and `sandbagging-stripped`
+# (prompt removed, buggy pipeline) are preserved for comparison.
+#
+# What changed since `stripped.yaml` produced its results — see docs/handoff.md
+# for the full bug table:
+#
+#   - Message reconstruction emitted every assistant message twice (~32% of the
+#     corpus), because input messages were deduped by node_id only while the
+#     completion they echoed carried a different id. Now a completion authorises
+#     suppressing exactly one later echo, consumed once — so an agent that
+#     genuinely repeats itself (running the same command twice, re-issuing a
+#     refusal) keeps both occurrences. That repetition is the behavioural
+#     evidence for `gives_up`, `partial_problem_solving` and `refusals`, so an
+#     over-eager dedup would have deleted signal in the labels under study.
+#
+#   - `Transcript.n_characters` summed message content only, omitting tool-call
+#     arguments. That understated length by 23% overall but 13%-41% depending on
+#     label, biasing every length control along the axis it exists to control
+#     for. Length is now the rendered length, matching `apply_length_cap`.
+#
+#   - Both arms now share one layout rule. Previously the global arm emitted
+#     `<first_few_messages>` *and* the whole transcript, reading its opening five
+#     messages twice, while chunk 0 — which already contains them — rendered an
+#     empty block. The context block now appears only when it carries messages
+#     the body lacks, which makes the global arm exactly the single-chunk case.
+#
+# Corpus after the fixes: 47.0M characters, 3,389 chunks (was 69.5M / 4,736 with
+# the duplication bug).
+
+name: sandbagging-fixed
+description: >
+  Global and chunked monitors for sandbagging on MALT with the elicitation
+  system prompt removed and the reconstruction, length and rendering bugs
+  fixed. First run with inputs believed correct.
+
+monitor_target: sandbagging
+prompt_version: v3
+output_dir: results
+
+dataset:
+  hf_repo: metr-evals/malt-public
+  hf_config: default
+  split: public
+  strip_system_prompt: true
+
+subset:
+  label_quotas:
+    sabotage: 50
+    refusals: 50
+    partial_problem_solving: 50
+    match_weaker_model: 50
+    reasoning_about_task: 50
+    gives_up: all
+    benign: 296
+
+  seed: 0
+  manually_reviewed_only: true
+  max_transcript_tokens: 350000
+
+model:
+  provider: openai
+  name: gpt-4.1-mini
+  max_tokens: 256
+  temperature: 0.0
+  max_concurrency: 2
+  max_retries: 8
+  max_input_tokens: 350000
+
+chunk:
+  size: 20
+  overlap: 0
+  unit: messages
+  context_messages: 5
+
+aggregation:
+  method: max
+  top_k: 3
