@@ -87,9 +87,14 @@ def _style() -> None:
 
 
 def _title(ax: plt.Axes, headline: str, subtitle: str = "") -> None:
-    """Headline states the finding; subtitle carries the caveat or the n.
+    """Headline names what is plotted; subtitle carries the finding and caveats.
 
-    Pad scales with the subtitle's line count — a fixed pad lets a two-line
+    Deliberately descriptive rather than argumentative: a figure often travels
+    without its surrounding text, and a headline asserting a conclusion is
+    harder to keep honest than one naming the axes. Every number in the subtitle
+    is derived from the data so it cannot go stale.
+
+    Pad scales with the subtitle's line count — a fixed pad lets a multi-line
     subtitle run back through the headline.
     """
     lines = subtitle.count("\n") + 1 if subtitle else 0
@@ -207,9 +212,9 @@ def recall_by_label(out: Path, fmt: str, results: Path) -> Path | None:
         n_positive = int(paired["is_positive"].sum())
     _title(
         ax,
-        f"Chunking transforms {big} behaviours and leaves {floor} at the floor",
-        f"recall on {n_positive} sandbagging runs · gpt-4.1-mini · "
-        f"elicitation prompt removed",
+        "Recall by behaviour label, global vs chunked",
+        f"{n_positive} sandbagging runs · gpt-4.1-mini · elicitation prompt removed\n"
+        f"chunking transforms {big} behaviours and leaves {floor} at the floor",
     )
     return _save(fig, out / f"recall_by_label.{fmt}")
 
@@ -267,9 +272,9 @@ def aggregation(out: Path, fmt: str, results: Path) -> Path | None:
     # the data supports.
     _title(
         ax,
-        "Most of the gain survives a rule that cannot exploit extra draws",
-        "mean dilutes as chunks multiply, so where it still beats global the advantage\n"
-        "is not a draw-count artifact — refusals is the exception, resting wholly on max",
+        "Recall by aggregation rule",
+        "mean dilutes as chunks multiply and so cannot exploit extra draws; where it\n"
+        "still beats global the advantage is not a draw-count artifact",
     )
     return _save(fig, out / f"aggregation.{fmt}")
 
@@ -361,9 +366,10 @@ def score_scatter(out: Path, fmt: str, results: Path, threshold: float) -> Path 
     crossings = f"{len(lost)} crosses back" if len(lost) == 1 else f"{len(lost)} cross back"
     _title(
         ax,
-        f"{recovered} sandbagging runs cross the threshold; benign scores stay put",
-        f"{len(paired)} transcripts · threshold {threshold:g} · {crossings} · "
-        f"benign flagged {benign_flagged}/{n_benign} · McNemar p {shown}",
+        "Global vs chunked monitor score, by ground truth",
+        f"{len(paired)} transcripts · threshold {threshold:g} · McNemar p {shown}\n"
+        f"{recovered} sandbagging runs cross the threshold, {crossings}; "
+        f"benign flagged {benign_flagged}/{n_benign} either way",
     )
     return _save(fig, out / f"score_scatter.{fmt}")
 
@@ -424,7 +430,7 @@ def fpr_by_length(out: Path, fmt: str, results: Path, baseline: Path) -> Path | 
 
     _title(
         ax,
-        "Chunking redistributes false positives rather than removing them",
+        "False-positive rate by transcript length decile",
         "293 benign runs · 2 false positives in each arm — the shape is real, "
         "the counts are small",
     )
@@ -495,9 +501,9 @@ def length_by_label(out: Path, fmt: str, baseline: Path) -> Path | None:
                   fontsize=9.5, labelpad=8)
     _title(
         ax,
-        "Length is confounded with behaviour",
-        "median spans 24x across labels — so any per-label comparison is partly\n"
-        "a comparison of transcript lengths",
+        "Transcript length by behaviour label",
+        "length is confounded with behaviour — the median spans 24x across labels, so\n"
+        "any per-label comparison is partly a comparison of transcript lengths",
     )
     return _save(fig, out / f"length_by_label.{fmt}")
 
@@ -544,10 +550,9 @@ def length_composition(out: Path, fmt: str, results: Path) -> Path | None:
     ax.set_xlabel("share of the quartile's positive runs", fontsize=9.5, labelpad=8)
     _title(
         ax,
-        "Length quartiles hold different behaviours, not the same one at "
-        "different lengths",
-        "which is why a gain that grows with length is not evidence that length "
-        "is what matters",
+        "Label composition by length quartile",
+        "quartiles hold different behaviours, not the same one at different lengths —\n"
+        "so a gain that grows with length is not evidence that length is what matters",
     )
     return _save(fig, out / f"length_composition.{fmt}")
 
@@ -591,9 +596,10 @@ def run_source(out: Path, fmt: str, baseline: Path) -> Path | None:
     ax.legend(loc="lower right", fontsize=9.5, handletextpad=0.6, labelspacing=0.5)
     _title(
         ax,
-        "Prompting is almost perfectly confounded with behaviour",
-        "every benign run is natural and five of six positive labels are wholly\n"
-        "prompted — so “was an instruction injected” is available as a shortcut",
+        "Run source by behaviour label",
+        "prompting is almost perfectly confounded with behaviour: every benign run is\n"
+        "natural and five of six positive labels are wholly prompted, so “was an\n"
+        "instruction injected” is available to a monitor as a shortcut",
     )
     return _save(fig, out / f"run_source.{fmt}")
 
@@ -663,9 +669,10 @@ def positive_outcomes(out: Path, fmt: str, results: Path) -> Path | None:
         missed, total = int(table["both_missed"].sum()), int(table["total"].sum())
     _title(
         ax,
-        f"{missed} of {total} positives are missed by both monitors",
-        "chunking converts partial detection into near-complete detection, but the\n"
-        "residual is dominated by labels neither architecture reaches",
+        "Outcome of every positive run, by label",
+        f"{missed} of {total} positives are missed by both monitors — chunking converts\n"
+        f"partial detection into near-complete detection, but the residual is dominated\n"
+        f"by labels neither architecture reaches",
     )
     return _save(fig, out / f"positive_outcomes.{fmt}")
 
@@ -732,8 +739,9 @@ def failure_modes(out: Path, fmt: str, results: Path, baseline: Path,
     ax.legend(loc="lower right", fontsize=9, labelspacing=0.5, handlelength=1.2)
     _title(
         ax,
-        "Both monitors fail the same way: they call it a good-faith attempt",
-        "categories overlap, so shares do not sum to 100%",
+        "Stated rationale on false negatives, by arm",
+        "categories overlap, so shares do not sum to 100% — both arms fail the same way,\n"
+        "concluding the agent was making a good-faith attempt",
     )
     return _save(fig, out / f"failure_modes.{fmt}")
 
