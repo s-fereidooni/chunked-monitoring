@@ -337,8 +337,10 @@ def score_scatter(out: Path, fmt: str, results: Path, threshold: float) -> Path 
     ax.set_xlim(-6, 106)
     ax.set_ylim(-6, 106)
     ax.set_aspect("equal")
-    ax.legend(loc="upper left", bbox_to_anchor=(0.50, 0.42), fontsize=9.5,
-              handletextpad=0.3, markerscale=1.7, labelspacing=0.5)
+    # Below the axes: the plot is square and full of points, and any in-axes
+    # placement collided with the "lost" annotation in the lower-right quadrant.
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.11), ncol=2,
+              fontsize=9.5, handletextpad=0.3, markerscale=1.7, columnspacing=2.2)
 
     from scipy import stats as _stats
 
@@ -346,8 +348,17 @@ def score_scatter(out: Path, fmt: str, results: Path, threshold: float) -> Path 
     pvalue = (_stats.binomtest(recovered, discordant, 0.5).pvalue
               if discordant else 1.0)
     shown = "< 0.0001" if pvalue < 0.0001 else f"= {pvalue:.4f}"
-    _title(ax, "Every run, scored twice",
-           f"{len(paired)} transcripts · threshold {threshold:g} · McNemar p {shown}")
+    benign_flagged = int((paired[~paired["is_positive"]]["score_variant"] >= threshold).sum())
+    n_benign = int((~paired["is_positive"]).sum())
+    # Headline states the finding, like every other figure here, and is derived
+    # so it cannot go stale: the movement is almost entirely one-way, and the
+    # benign cloud does not move at all.
+    _title(
+        ax,
+        f"{recovered} runs cross the threshold upward, {len(lost)} back down",
+        f"{len(paired)} transcripts · threshold {threshold:g} · McNemar p {shown} · "
+        f"benign flagged {benign_flagged}/{n_benign}",
+    )
     return _save(fig, out / f"score_scatter.{fmt}")
 
 
