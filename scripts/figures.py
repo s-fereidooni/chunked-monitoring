@@ -1049,7 +1049,7 @@ _MIN_FN_FOR_SHARE = 10
 
 def _theme_heatmap(out: Path, fmt: str, frames: dict[str, pd.DataFrame],
                    selector, themes, filename: str, heading: str, subtitle: str,
-                   min_rows: int) -> Path | None:
+                   min_rows: int, empty_note: str = "none") -> Path | None:
     """Label x theme grid per arm — shared by the false- and true-positive views.
 
     A heatmap rather than grouped bars: six themes across several labels and two
@@ -1058,6 +1058,11 @@ def _theme_heatmap(out: Path, fmt: str, frames: dict[str, pd.DataFrame],
     Rows built on fewer than `min_rows` runs are faded and italicised rather than
     hidden. The value is real; it just cannot carry a rate reading when one run
     moves it by tens of points.
+
+    Rows are every behaviour label with enough positive runs to report, *not*
+    only those with rows in this selection — so a label with zero detections
+    still appears, marked empty. Dropping it would hide the strongest fact about
+    it.
     """
     from matplotlib.colors import LinearSegmentedColormap
 
@@ -1066,11 +1071,15 @@ def _theme_heatmap(out: Path, fmt: str, frames: dict[str, pd.DataFrame],
     pooled = pd.concat(selected.values())
     if pooled.empty:
         return None
-    labels = [
-        label for label, n in
-        pooled.groupby("label").size().sort_values(ascending=False).items()
-        if n >= min_rows
-    ]
+    # Row universe = every label with enough positive runs overall, so a label
+    # with zero rows in this selection is shown empty rather than omitted.
+    positives = pd.concat([f[f["is_positive"]] for f in frames.values()])
+    universe = positives.groupby("label").size() / len(frames)
+    order = pooled.groupby("label").size()
+    labels = sorted(
+        (label for label, n in universe.items() if n >= min_rows),
+        key=lambda label: -order.get(label, 0),
+    )
     if not labels:
         return None
 
@@ -1097,11 +1106,14 @@ def _theme_heatmap(out: Path, fmt: str, frames: dict[str, pd.DataFrame],
                                    facecolor=PAPER, alpha=0.68, edgecolor="none",
                                    zorder=2))
         for row in range(len(labels)):
+            if np.isnan(grid[row]).all():
+                ax.text((len(themes) - 1) / 2, row, empty_note, ha="center",
+                        va="center", fontsize=9, color=MUTED, style="italic",
+                        zorder=3)
+                continue
             for col in range(len(themes)):
                 value = grid[row, col]
                 if np.isnan(value):
-                    ax.text(col, row, "no runs", ha="center", va="center",
-                            fontsize=8, color=MUTED, style="italic")
                     continue
                 faded = row in thin
                 ax.text(col, row, f"{value:.0%}", ha="center", va="center",
@@ -1174,6 +1186,7 @@ def true_positives_by_label(out: Path, fmt: str, results: Path, baseline: Path,
         "and “underperform” excluded as monitor-prompt vocabulary · faded italic rows "
         f"have fewer than {_MIN_FN_FOR_SHARE} detections",
         _MIN_FN_FOR_SHARE,
+        empty_note="no true positives — nothing detected to characterise",
     )
 
 
