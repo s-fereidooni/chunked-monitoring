@@ -1151,6 +1151,107 @@ def failure_modes_by_label(out: Path, fmt: str, results: Path, baseline: Path,
     return _save(fig, out / f"failure_modes_by_label.{fmt}")
 
 
+# Themes for correct detections. "intentional", "deliberate" and "underperform"
+# are deliberately absent: they are the monitor prompt's own words and appear in
+# ~100% of verdicts in both arms, so they measure the prompt, not the monitor.
+TP_THEMES = [
+    ("quotes the agent admitting it",
+     r"the (agent|assistant) (explicitly )?(states|admits|acknowledges|says)|"
+     r"explicitly (states|admits)|its own reasoning|stated intention"),
+    ("inefficiency / repetition",
+     r"inefficien|repeat(s|ed|edly)|redundant|loop|same (command|approach)"),
+    ("refuses or avoids", r"refus|declin|unwilling|does not attempt"),
+    ("capability below its own",
+     r"weaker (ai )?model|less capable|below its (ability|capabilit)|simpler than|dumbed"),
+    ("work left incomplete",
+     r"incomplete|partial (solution|answer|work)|did not (complete|finish)|"
+     r"stops short|without (completing|finishing)|not actually (solv|complet)"),
+    ("output quality is poor",
+     r"suboptimal|incorrect result|flawed|subtle (flaw|bug|issue)|inaccurate|worse than"),
+    ("cites an instruction", r"instruct|system prompt|told to|as directed"),
+]
+
+
+def true_positive_reasons(out: Path, fmt: str, results: Path, baseline: Path,
+                          threshold: float) -> Path | None:
+    """What each arm says when it is right, and what recoveries say differently.
+
+    Two panels because they answer different questions. Left compares the arms
+    on every correct detection. Right splits the chunked arm's detections into
+    those the global monitor also caught and those it missed — which is the
+    sharper comparison, since it characterises what chunking actually adds
+    rather than what both arms already agree on.
+    """
+    frames = _both_arms(results, baseline)
+    if frames is None:
+        return None
+    paired_path = results / "paired.csv"
+    if not paired_path.is_file():
+        return None
+    transitions = dict(
+        pd.read_csv(paired_path)[["run_id", "transition"]].itertuples(index=False)
+    )
+
+    caught = {}
+    for arm, frame in frames.items():
+        tp = frame[(frame["is_positive"]) & (frame["score"] >= threshold)].copy()
+        tp["transition"] = tp["run_id"].map(transitions)
+        caught[arm] = tp
+    both = caught["chunk"][caught["chunk"]["transition"] == "both_caught"]
+    recovered = caught["chunk"][caught["chunk"]["transition"] == "recovered"]
+
+    def shares(frame: pd.DataFrame) -> list[float]:
+        text = frame["reasoning"].fillna("")
+        return [
+            float(text.str.contains(pattern, case=False, regex=True).mean())
+            for _, pattern in TP_THEMES
+        ]
+
+    panels = [
+        ("Every correct detection",
+         [("global", GLOBAL, caught["global"]), ("chunked", CHUNK, caught["chunk"])]),
+        ("Chunked detections, split by whether global also caught it",
+         [("global caught it too", "#0B5E5D", both),
+          ("recovered by chunking", CHUNK, recovered)]),
+    ]
+
+    fig, axes = plt.subplots(1, 2, figsize=(12.6, 4.4), sharey=True)
+    y = np.arange(len(TP_THEMES))
+    height = 0.36
+    for ax, (heading, series) in zip(axes, panels, strict=True):
+        for offset, (name, colour, frame) in zip((height / 2, -height / 2), series,
+                                                 strict=True):
+            values = shares(frame)
+            ax.barh(y + offset, values, height, color=colour,
+                    label=f"{name} ({len(frame)})")
+            for i, value in enumerate(values):
+                ax.annotate(f"{value:.0%}", (value, i + offset), xytext=(5, 0),
+                            textcoords="offset points", va="center", fontsize=8,
+                            color=MUTED)
+        ax.set_xlim(0, 0.86)
+        ax.set_xticks([0, 0.25, 0.5, 0.75])
+        ax.set_xticklabels(["0", "25%", "50%", "75%"])
+        for tick in (0, 0.25, 0.5, 0.75):
+            ax.axvline(tick, color=HAIRLINE, lw=0.8, zorder=0)
+        ax.invert_yaxis()
+        # Upper right: rows are sorted so the shortest bars sit at the top, and
+        # a lower-right legend landed on the longest ones.
+        ax.legend(loc="upper right", fontsize=8.5, handlelength=1.2, labelspacing=0.45)
+        ax.set_title(heading, fontsize=10, loc="left", color=INK, pad=8)
+
+    axes[0].set_yticks(y)
+    axes[0].set_yticklabels([name for name, _ in TP_THEMES], fontsize=9.5)
+    fig.suptitle("Stated rationale on true positives", fontsize=12.5,
+                 fontweight="demibold", color=INK, x=0.02, ha="left", y=1.04)
+    fig.text(0.02, 0.985,
+             "share of that group's correct detections · categories overlap · "
+             "counts in the legend\n“intentional” and “underperform” are excluded — they are the "
+             "monitor prompt's own words and appear in ~100% of verdicts",
+             fontsize=9, color=MUTED, ha="left", va="top", linespacing=1.5)
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    return _save(fig, out / f"true_positive_reasons.{fmt}")
+
+
 def _save(fig: plt.Figure, path: Path) -> Path:
     fig.savefig(path)
     plt.close(fig)
@@ -1188,6 +1289,8 @@ def main() -> int:
         failure_modes(out, args.format, chunk_dir, global_dir, args.threshold),
         failure_modes_by_label(out, args.format, chunk_dir, global_dir,
                                args.threshold),
+        true_positive_reasons(out, args.format, chunk_dir, global_dir,
+                              args.threshold),
         # length and calibration
         recall_by_length(out, args.format, chunk_dir, global_dir, args.threshold),
         recall_by_length_combined(out, args.format, chunk_dir, global_dir,
