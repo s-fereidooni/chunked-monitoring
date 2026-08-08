@@ -20,7 +20,7 @@ import pandas as pd
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.patches import Polygon  # noqa: E402
+from matplotlib.patches import Polygon, Rectangle  # noqa: E402
 
 from monitor_localization.config import ExperimentConfig  # noqa: E402
 from monitor_localization.evaluation import DEFAULT_THRESHOLD  # noqa: E402
@@ -1054,9 +1054,11 @@ def failure_modes_by_label(out: Path, fmt: str, results: Path, baseline: Path,
     A heatmap rather than grouped bars: the data is a label x theme grid, and at
     six themes across seven labels and two arms, bars would need 84 of them.
 
-    Cells are suppressed where an arm has fewer than `_MIN_FN_FOR_SHARE` misses
-    for that label — which is most of the chunked arm's strong labels, and is
-    itself the finding: it barely misses them.
+    Every cell is shown, but rows where an arm has fewer than
+    `_MIN_FN_FOR_SHARE` misses are faded and italicised: with 3 misses one run
+    moves the figure by 33 points, so the number is real but should not be read
+    as a rate. Those thin rows are also the finding — the chunked arm barely
+    misses the labels it detects well.
     """
     from matplotlib.colors import LinearSegmentedColormap
 
@@ -1083,10 +1085,13 @@ def failure_modes_by_label(out: Path, fmt: str, results: Path, baseline: Path,
                 if n >= _MIN_FN_FOR_SHARE
             ]
         grid = np.full((len(labels), len(FAILURE_THEMES)), np.nan)
+        thin: list[int] = []
         for row, label in enumerate(labels):
             group = missed[missed["label"] == label]
-            if len(group) < _MIN_FN_FOR_SHARE:
+            if group.empty:
                 continue
+            if len(group) < _MIN_FN_FOR_SHARE:
+                thin.append(row)
             text = group["reasoning"].fillna("")
             for col, (_, pattern) in enumerate(FAILURE_THEMES):
                 grid[row, col] = float(
@@ -1094,16 +1099,24 @@ def failure_modes_by_label(out: Path, fmt: str, results: Path, baseline: Path,
                 )
 
         ax.imshow(grid, cmap=ramp, vmin=0, vmax=1, aspect="auto")
+        # Wash out rows built on too few misses rather than hiding them: the
+        # value is real, it just cannot carry a rate reading.
+        for row in thin:
+            ax.add_patch(Rectangle(
+                (-0.5, row - 0.5), len(FAILURE_THEMES), 1, facecolor=PAPER,
+                alpha=0.68, edgecolor="none", zorder=2,
+            ))
         for row in range(len(labels)):
             for col in range(len(FAILURE_THEMES)):
                 value = grid[row, col]
                 if np.isnan(value):
-                    ax.text(col, row, "—", ha="center", va="center", fontsize=9,
-                            color=MUTED)
-                else:
-                    ax.text(col, row, f"{value:.0%}", ha="center", va="center",
-                            fontsize=8.5, fontweight="demibold",
-                            color=PAPER if value > 0.55 else INK)
+                    continue
+                faded = row in thin
+                ax.text(col, row, f"{value:.0%}", ha="center", va="center",
+                        fontsize=8.5, zorder=3,
+                        fontweight="normal" if faded else "demibold",
+                        style="italic" if faded else "normal",
+                        color=MUTED if faded else (PAPER if value > 0.55 else INK))
         ax.set_xticks(range(len(FAILURE_THEMES)))
         ax.set_xticklabels([name for name, _ in FAILURE_THEMES], fontsize=8.5,
                            rotation=30, ha="right")
@@ -1113,10 +1126,12 @@ def failure_modes_by_label(out: Path, fmt: str, results: Path, baseline: Path,
         # first, which silently showed the chunked counts against global's row.
         ax.set_yticklabels([_label(label) for label in labels], fontsize=9.5)
         for row, label in enumerate(labels):
-            ax.annotate(f"n={int(counts.get(label, 0))}",
-                        (len(FAILURE_THEMES) - 0.35, row), xytext=(10, 0),
+            n = int(counts.get(label, 0))
+            ax.annotate(f"n={n}", (len(FAILURE_THEMES) - 0.35, row), xytext=(10, 0),
                         textcoords="offset points", va="center", fontsize=8.5,
-                        color=MUTED, annotation_clip=False)
+                        color=POSITIVE if n < _MIN_FN_FOR_SHARE else MUTED,
+                        style="italic" if n < _MIN_FN_FOR_SHARE else "normal",
+                        annotation_clip=False)
         ax.set_xlim(-0.5, len(FAILURE_THEMES) - 0.5 + 0.9)
         ax.set_xticks(np.arange(-0.5, len(FAILURE_THEMES), 1), minor=True)
         ax.set_yticks(np.arange(-0.5, len(labels), 1), minor=True)
@@ -1129,7 +1144,8 @@ def failure_modes_by_label(out: Path, fmt: str, results: Path, baseline: Path,
                  fontsize=12.5, fontweight="demibold", color=INK, x=0.02,
                  ha="left", y=1.04)
     fig.text(0.02, 0.985, "share of that label's missed runs · categories overlap · "
-             f"“—” where an arm has fewer than {_MIN_FN_FOR_SHARE} misses to divide",
+             f"faded italic rows have fewer than {_MIN_FN_FOR_SHARE} misses, where one "
+             "run moves the figure by 14-33 points",
              fontsize=9, color=MUTED, ha="left", va="top")
     fig.tight_layout(rect=(0, 0, 1, 0.96))
     return _save(fig, out / f"failure_modes_by_label.{fmt}")
