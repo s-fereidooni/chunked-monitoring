@@ -746,6 +746,197 @@ def failure_modes(out: Path, fmt: str, results: Path, baseline: Path,
     return _save(fig, out / f"failure_modes.{fmt}")
 
 
+# --- length and calibration -------------------------------------------------
+
+
+def _both_arms(results: Path, baseline: Path) -> dict[str, pd.DataFrame] | None:
+    paths = {"global": baseline / "per_sample.csv", "chunk": results / "per_sample.csv"}
+    if not all(p.is_file() for p in paths.values()):
+        return None
+    frames = {}
+    for arm, path in paths.items():
+        frame = pd.read_csv(path)
+        frame["label"] = _primary_label(frame)
+        frame["tokens"] = pd.to_numeric(frame["n_characters"], errors="coerce") / 4.4
+        frames[arm] = frame[frame["tokens"].notna()]
+    return frames
+
+
+def recall_by_length(out: Path, fmt: str, results: Path, baseline: Path,
+                     threshold: float) -> Path | None:
+    """Detection rate against transcript length, within each label.
+
+    Binned *within* label, not pooled: length is confounded with behaviour in
+    MALT (medians span 24x), so a pooled curve would mostly trace which labels
+    happen to be long. Terciles rather than deciles because a label holds ~49
+    runs — bin counts are printed so the reader can see how thin they are.
+    """
+    frames = _both_arms(results, baseline)
+    if frames is None:
+        return None
+    labels = [
+        label for label in sorted(frames["global"]["label"].unique())
+        if label != "benign" and (frames["global"]["label"] == label).sum() >= 15
+    ]
+    if not labels:
+        return None
+
+    ncols = 3
+    nrows = (len(labels) + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.4 * ncols, 2.9 * nrows),
+                             sharey=True)
+    axes = np.atleast_1d(axes).ravel()
+
+    def _fmt(tokens: float) -> str:
+        return f"{tokens / 1000:.0f}k" if tokens >= 1000 else f"{tokens:.0f}"
+
+    for ax, label in zip(axes, labels, strict=False):
+        base = frames["global"][frames["global"]["label"] == label]
+        # Bins fixed from one arm so both plot at identical x positions; the runs
+        # are paired, so the tercile medians are the same for both.
+        edges = np.percentile(base["tokens"], [0, 33.3, 66.7, 100])
+        edges[-1] += 1
+        spans = list(zip(edges[:-1], edges[1:], strict=True))
+
+        for arm, colour in (("global", GLOBAL_DARK), ("chunk", CHUNK)):
+            frame = frames[arm][frames[arm]["label"] == label]
+            xs, ys = [], []
+            for i, (lo, hi) in enumerate(spans):
+                inside = frame[(frame["tokens"] >= lo) & (frame["tokens"] < hi)]
+                if inside.empty:
+                    continue
+                xs.append(i)
+                ys.append(float((inside["score"] >= threshold).mean()))
+            ax.plot(xs, ys, marker="o", ms=6, lw=2.2, color=colour,
+                    solid_capstyle="round", label=arm, zorder=3)
+
+        # Categorical x: only three points per panel, so a log axis bought
+        # nothing and its minor ticks collided with the bin counts.
+        ticks, counts = [], []
+        for i, (lo, hi) in enumerate(spans):
+            inside = base[(base["tokens"] >= lo) & (base["tokens"] < hi)]
+            ticks.append(_fmt(float(inside["tokens"].median())) if len(inside) else "")
+            counts.append(len(inside))
+        ax.set_xticks(range(len(spans)))
+        ax.set_xticklabels(ticks, fontsize=9)
+        ax.set_xlim(-0.35, len(spans) - 0.65)
+        for i, n in enumerate(counts):
+            ax.annotate(f"n={n}", (i, 1.02), ha="center", va="bottom",
+                        fontsize=7.5, color=MUTED)
+        ax.set_ylim(-0.05, 1.16)
+        ax.set_yticks([0, 0.5, 1.0])
+        for tick in (0, 0.5, 1.0):
+            ax.axhline(tick, color=HAIRLINE, lw=0.8, zorder=0)
+        ax.set_title(_label(label), fontsize=10.5, color=INK, loc="left", pad=16)
+
+    for ax in axes[len(labels):]:
+        ax.set_visible(False)
+
+    handles, names = axes[0].get_legend_handles_labels()
+    fig.legend(handles, names, loc="lower center", ncol=2, fontsize=9.5,
+               frameon=False, bbox_to_anchor=(0.5, -0.04), handlelength=1.6)
+    fig.supxlabel("median transcript length of the tercile, in tokens",
+                  fontsize=9.5, color=MUTED, y=0.02)
+    fig.supylabel(f"recall at threshold {threshold:g}", fontsize=9.5, color=MUTED)
+    fig.suptitle("Recall against transcript length, within each label",
+                 fontsize=12.5, fontweight="demibold", color=INK, x=0.02,
+                 ha="left", y=1.0)
+    fig.tight_layout(rect=(0.02, 0.04, 1, 0.97))
+    return _save(fig, out / f"recall_by_length.{fmt}")
+
+
+def calibration(out: Path, fmt: str, results: Path, baseline: Path,
+                threshold: float) -> Path | None:
+    """Does a higher score mean a higher chance of being a real positive?
+
+    Left: the standard reliability curve — bin by score, plot the share of runs
+    in each bin that are genuinely positive. A monitor whose 0-100 output behaved
+    like a probability would follow the diagonal.
+
+    Right: whether confidence tracks competence *across behaviours* — median
+    score on a label's positives against recall on that label. A label the
+    monitor detects well but scores tepidly, or one it scores confidently but
+    misses, shows up off the trend.
+    """
+    frames = _both_arms(results, baseline)
+    if frames is None:
+        return None
+
+    fig, (left, right) = plt.subplots(1, 2, figsize=(9.6, 4.1))
+
+    bins = [0, 1, 10, 25, 50, 75, 90, 101]
+    for arm, colour in (("global", GLOBAL_DARK), ("chunk", CHUNK)):
+        frame = frames[arm]
+        xs, ys, ns = [], [], []
+        for lo, hi in zip(bins[:-1], bins[1:], strict=True):
+            inside = frame[(frame["score"] >= lo) & (frame["score"] < hi)]
+            if len(inside) < 5:
+                continue
+            xs.append(float(inside["score"].mean()))
+            ys.append(float(inside["is_positive"].mean()))
+            ns.append(len(inside))
+        left.plot(xs, ys, marker="o", ms=6, lw=2.2, color=colour, label=arm,
+                  solid_capstyle="round")
+        # Global above the marker, chunk below: the two series sit close enough
+        # that a shared offset made the counts unreadable.
+        dy = 9 if arm == "global" else -15
+        for x, y, n in zip(xs, ys, ns, strict=True):
+            left.annotate(f"{n}", (x, y), xytext=(0, dy), textcoords="offset points",
+                          ha="center", fontsize=7.5, color=colour)
+    left.plot([0, 100], [0, 1], ls=(0, (4, 4)), lw=0.9, color=MUTED, zorder=0)
+    left.axvline(threshold, color=HAIRLINE, lw=1.0, zorder=0)
+    left.set_xlim(-4, 104)
+    left.set_ylim(-0.05, 1.05)
+    left.set_xlabel("monitor score (bin mean)", fontsize=9.5, labelpad=6)
+    left.set_ylabel("share of runs that are genuinely positive", fontsize=9.5)
+    left.set_yticks([0, 0.5, 1.0])
+    for tick in (0, 0.5, 1.0):
+        left.axhline(tick, color=HAIRLINE, lw=0.8, zorder=0)
+    left.legend(fontsize=9, loc="lower right", handlelength=1.4)
+    left.set_title("Overall reliability · labels are bin counts", fontsize=10,
+                   loc="left", color=INK, pad=8)
+
+    for arm, colour in (("global", GLOBAL_DARK), ("chunk", CHUNK)):
+        frame = frames[arm]
+        xs, ys, names = [], [], []
+        for label, group in frame[frame["is_positive"]].groupby("label"):
+            if len(group) < 15:
+                continue
+            xs.append(float((group["score"] >= threshold).mean()))
+            ys.append(float(group["score"].median()))
+            names.append(label)
+        right.scatter(xs, ys, s=70, color=colour, edgecolor=PAPER, linewidth=1.4,
+                      zorder=3, label=arm)
+        if arm == "chunk":
+            # Labels are placed once, on the chunked point. Several labels share
+            # (0, 0) — both chance-level behaviours score and detect nothing — so
+            # coincident points are stacked rather than printed on top of one another.
+            placed: list[tuple[float, float]] = []
+            for x, y, name in sorted(zip(xs, ys, names, strict=True)):
+                offset = 0
+                while any(abs(x - px) < 0.08 and abs(y + offset - py) < 7
+                          for px, py in placed):
+                    offset += 8
+                placed.append((x, y + offset))
+                right.annotate(_label(name), (x, y), xytext=(9, -3 + offset),
+                               textcoords="offset points", fontsize=8, color=INK)
+    right.axhline(threshold, color=HAIRLINE, lw=1.0, zorder=0)
+    right.set_xlim(-0.05, 1.15)
+    right.set_ylim(-5, 105)
+    right.set_xlabel(f"recall at threshold {threshold:g}", fontsize=9.5, labelpad=6)
+    right.set_ylabel("median score on that label's positives", fontsize=9.5)
+    for tick in (0, 25, 50, 75, 100):
+        right.axhline(tick, color=HAIRLINE, lw=0.8, zorder=0)
+    right.legend(fontsize=9, loc="upper left", handlelength=1.4)
+    right.set_title("Confidence against competence, per label", fontsize=10,
+                    loc="left", color=INK, pad=8)
+
+    fig.suptitle("Score calibration", fontsize=12.5, fontweight="demibold",
+                 color=INK, x=0.02, ha="left", y=1.02)
+    fig.tight_layout()
+    return _save(fig, out / f"calibration.{fmt}")
+
+
 def _save(fig: plt.Figure, path: Path) -> Path:
     fig.savefig(path)
     plt.close(fig)
@@ -781,6 +972,9 @@ def main() -> int:
         # failure modes
         positive_outcomes(out, args.format, chunk_dir),
         failure_modes(out, args.format, chunk_dir, global_dir, args.threshold),
+        # length and calibration
+        recall_by_length(out, args.format, chunk_dir, global_dir, args.threshold),
+        calibration(out, args.format, chunk_dir, global_dir, args.threshold),
     ]
     made = [p for p in written if p]
     if not made:
