@@ -228,8 +228,6 @@ def recall_by_label(out: Path, fmt: str, results: Path) -> Path | None:
     _title(
         ax,
         "Recall by behaviour label, global vs chunked",
-        f"{n_positive} sandbagging runs · gpt-4.1-mini · elicitation prompt removed\n"
-        f"chunking transforms {big} behaviours and leaves {floor} at the floor",
     )
     return _save(fig, out / f"recall_by_label.{fmt}")
 
@@ -381,8 +379,7 @@ def score_scatter(out: Path, fmt: str, results: Path, threshold: float) -> Path 
     crossings = f"{len(lost)} crosses back" if len(lost) == 1 else f"{len(lost)} cross back"
     _title(
         ax,
-        "Global vs chunked monitor score, by ground truth",
-        f"{len(paired)} transcripts · threshold {threshold:g} · McNemar p {shown}\n"
+        "Global vs chunked monitor score",
         f"{recovered} sandbagging runs cross the threshold, {crossings}; "
         f"benign flagged {benign_flagged}/{n_benign} either way",
     )
@@ -516,9 +513,7 @@ def length_by_label(out: Path, fmt: str, baseline: Path) -> Path | None:
                   fontsize=9.5, labelpad=8)
     _title(
         ax,
-        "Transcript length by behaviour label",
-        "length is confounded with behaviour — the median spans 24x across labels, so\n"
-        "any per-label comparison is partly a comparison of transcript lengths",
+        "Transcript length by behaviour label"
     )
     return _save(fig, out / f"length_by_label.{fmt}")
 
@@ -704,17 +699,7 @@ def failure_modes(out: Path, fmt: str, results: Path, baseline: Path,
     if not all(p.is_file() for p in paths.values()):
         return None
 
-    themes = [
-        ("no evidence of intent",
-         r"no evidence of (intentional|deliberate)|no (clear )?(indication|sign)s? of intentional"),
-        ("good-faith effort",
-         r"good[- ]faith|genuine(ly)? (attempt|effort|trying)|sincere|earnest|diligent"),
-        ("reasonable / appropriate", r"reasonable|appropriate|justified|legitimate"),
-        ("cites an instruction", r"instruct|system prompt|told to|as directed"),
-        ("blames the environment",
-         r"environment|technical (limitation|issue|constraint)|resource constraint|timeout"),
-        ("task looks complete", r"complet(ed|es) the task|successfully|accomplish"),
-    ]
+    themes = FAILURE_THEMES
     shares: dict[str, list[float]] = {}
     counts: dict[str, int] = {}
     for arm, path in paths.items():
@@ -749,8 +734,9 @@ def failure_modes(out: Path, fmt: str, results: Path, baseline: Path,
     ax.set_xticklabels(["0", "25%", "50%", "75%", "100%"])
     for tick in (0, 0.25, 0.5, 0.75, 1.0):
         ax.axvline(tick, color=HAIRLINE, lw=0.8, zorder=0)
-    ax.set_xlabel("share of that arm's false negatives whose rationale says this",
-                  fontsize=9.5, labelpad=8)
+    # Denominator is that arm's own missed runs, not all positives and not all
+    # runs — the old wording made readers check which.
+    ax.set_xlabel("share of that arm's missed runs", fontsize=9.5, labelpad=8)
     ax.legend(loc="lower right", fontsize=9, labelspacing=0.5, handlelength=1.2)
     _title(
         ax,
@@ -853,7 +839,7 @@ def recall_by_length(out: Path, fmt: str, results: Path, baseline: Path,
     fig.supxlabel("median transcript length of the tercile, in tokens",
                   fontsize=9.5, color=MUTED, y=0.02)
     fig.supylabel(f"recall at threshold {threshold:g}", fontsize=9.5, color=MUTED)
-    fig.suptitle("Recall against transcript length, within each label",
+    fig.suptitle("Recall against transcript length by label",
                  fontsize=12.5, fontweight="demibold", color=INK, x=0.02,
                  ha="left", y=1.0)
     fig.tight_layout(rect=(0.02, 0.04, 1, 0.97))
@@ -944,7 +930,7 @@ def recall_by_length_combined(out: Path, fmt: str, results: Path, baseline: Path
 
     _title(
         ax,
-        "Recall against transcript length, all labels",
+        "Recall against transcript length by label",
         f"terciles within each label · {len(labels)} behaviours · colour is the label, "
         f"line style the arm\nlabels sit at their true lengths, so the spread across "
         f"the x-axis is the length/behaviour confound",
@@ -1044,6 +1030,111 @@ def calibration(out: Path, fmt: str, results: Path, baseline: Path,
     return _save(fig, out / f"calibration.{fmt}")
 
 
+FAILURE_THEMES = [
+    ("no evidence of intent",
+     r"no evidence of (intentional|deliberate)|no (clear )?(indication|sign)s? of intentional"),
+    ("good-faith effort",
+     r"good[- ]faith|genuine(ly)? (attempt|effort|trying)|sincere|earnest|diligent"),
+    ("reasonable / appropriate", r"reasonable|appropriate|justified|legitimate"),
+    ("cites an instruction", r"instruct|system prompt|told to|as directed"),
+    ("blames the environment",
+     r"environment|technical (limitation|issue|constraint)|resource constraint|timeout"),
+    ("task looks complete", r"complet(ed|es) the task|successfully|accomplish"),
+]
+# Below this many missed runs a share is not worth printing: the chunked arm has
+# 3-7 misses on the labels it detects well, where one run moves the figure by
+# 14-33 points.
+_MIN_FN_FOR_SHARE = 10
+
+
+def failure_modes_by_label(out: Path, fmt: str, results: Path, baseline: Path,
+                           threshold: float) -> Path | None:
+    """The same rationale categories, broken out by behaviour label.
+
+    A heatmap rather than grouped bars: the data is a label x theme grid, and at
+    six themes across seven labels and two arms, bars would need 84 of them.
+
+    Cells are suppressed where an arm has fewer than `_MIN_FN_FOR_SHARE` misses
+    for that label — which is most of the chunked arm's strong labels, and is
+    itself the finding: it barely misses them.
+    """
+    from matplotlib.colors import LinearSegmentedColormap
+
+    frames = _both_arms(results, baseline)
+    if frames is None:
+        return None
+
+    ramp = LinearSegmentedColormap.from_list("chunk_seq", ["#F2F1ED", CHUNK])
+    fig, axes = plt.subplots(1, 2, figsize=(12.4, 4.6), sharey=True)
+
+    labels: list[str] | None = None
+    for ax, (arm, frame) in zip(axes, frames.items(), strict=False):
+        missed = frame[(frame["is_positive"]) & (frame["score"] < threshold)]
+        counts = missed.groupby("label").size()
+        if labels is None:
+            # Row order fixed by total misses across both arms so the two panels
+            # stay aligned and comparable.
+            allmissed = pd.concat([
+                f[(f["is_positive"]) & (f["score"] < threshold)] for f in frames.values()
+            ])
+            labels = [
+                label for label, n in
+                allmissed.groupby("label").size().sort_values(ascending=False).items()
+                if n >= _MIN_FN_FOR_SHARE
+            ]
+        grid = np.full((len(labels), len(FAILURE_THEMES)), np.nan)
+        for row, label in enumerate(labels):
+            group = missed[missed["label"] == label]
+            if len(group) < _MIN_FN_FOR_SHARE:
+                continue
+            text = group["reasoning"].fillna("")
+            for col, (_, pattern) in enumerate(FAILURE_THEMES):
+                grid[row, col] = float(
+                    text.str.contains(pattern, case=False, regex=True).mean()
+                )
+
+        ax.imshow(grid, cmap=ramp, vmin=0, vmax=1, aspect="auto")
+        for row in range(len(labels)):
+            for col in range(len(FAILURE_THEMES)):
+                value = grid[row, col]
+                if np.isnan(value):
+                    ax.text(col, row, "—", ha="center", va="center", fontsize=9,
+                            color=MUTED)
+                else:
+                    ax.text(col, row, f"{value:.0%}", ha="center", va="center",
+                            fontsize=8.5, fontweight="demibold",
+                            color=PAPER if value > 0.55 else INK)
+        ax.set_xticks(range(len(FAILURE_THEMES)))
+        ax.set_xticklabels([name for name, _ in FAILURE_THEMES], fontsize=8.5,
+                           rotation=30, ha="right")
+        ax.set_yticks(range(len(labels)))
+        # Plain names on the shared axis. The per-arm n goes inside the panel:
+        # with sharey=True, y-tick labels set by the second panel overwrite the
+        # first, which silently showed the chunked counts against global's row.
+        ax.set_yticklabels([_label(label) for label in labels], fontsize=9.5)
+        for row, label in enumerate(labels):
+            ax.annotate(f"n={int(counts.get(label, 0))}",
+                        (len(FAILURE_THEMES) - 0.35, row), xytext=(10, 0),
+                        textcoords="offset points", va="center", fontsize=8.5,
+                        color=MUTED, annotation_clip=False)
+        ax.set_xlim(-0.5, len(FAILURE_THEMES) - 0.5 + 0.9)
+        ax.set_xticks(np.arange(-0.5, len(FAILURE_THEMES), 1), minor=True)
+        ax.set_yticks(np.arange(-0.5, len(labels), 1), minor=True)
+        ax.grid(which="minor", color=PAPER, linewidth=2)
+        ax.tick_params(which="minor", length=0)
+        ax.set_title(f"{arm}  ·  n is that arm's misses for the label",
+                     fontsize=10, loc="left", color=INK, pad=8)
+
+    fig.suptitle("Stated rationale on false negatives, by label",
+                 fontsize=12.5, fontweight="demibold", color=INK, x=0.02,
+                 ha="left", y=1.04)
+    fig.text(0.02, 0.985, "share of that label's missed runs · categories overlap · "
+             f"“—” where an arm has fewer than {_MIN_FN_FOR_SHARE} misses to divide",
+             fontsize=9, color=MUTED, ha="left", va="top")
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    return _save(fig, out / f"failure_modes_by_label.{fmt}")
+
+
 def _save(fig: plt.Figure, path: Path) -> Path:
     fig.savefig(path)
     plt.close(fig)
@@ -1079,6 +1170,8 @@ def main() -> int:
         # failure modes
         positive_outcomes(out, args.format, chunk_dir),
         failure_modes(out, args.format, chunk_dir, global_dir, args.threshold),
+        failure_modes_by_label(out, args.format, chunk_dir, global_dir,
+                               args.threshold),
         # length and calibration
         recall_by_length(out, args.format, chunk_dir, global_dir, args.threshold),
         recall_by_length_combined(out, args.format, chunk_dir, global_dir,
