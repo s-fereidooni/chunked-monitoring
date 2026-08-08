@@ -43,6 +43,21 @@ MEAN = "#DE8A3C"
 POSITIVE = "#C2415B"
 BENIGN = "#A9BAC6"
 
+# Categorical slots for per-label series, in fixed order — never cycled, never
+# reassigned when a label is filtered out. Taken from the dataviz reference
+# palette and validated against this surface: lightness band, chroma floor,
+# adjacent-pair CVD separation (protan/deutan) and normal-vision separation all
+# pass. Three warn on contrast, which is why any figure using them carries a
+# legend rather than relying on colour alone.
+CATEGORICAL = [
+    "#2a78d6",  # blue
+    "#eb6834",  # orange
+    "#1baf7a",  # aqua
+    "#eda100",  # yellow
+    "#e87ba4",  # magenta
+    "#008300",  # green
+]
+
 STACK = ["Avenir Next", "Avenir", "Helvetica Neue", "DejaVu Sans"]
 
 # Shortened for axis labels; the tables keep the full names.
@@ -845,6 +860,98 @@ def recall_by_length(out: Path, fmt: str, results: Path, baseline: Path,
     return _save(fig, out / f"recall_by_length.{fmt}")
 
 
+def recall_by_length_combined(out: Path, fmt: str, results: Path, baseline: Path,
+                              threshold: float) -> Path | None:
+    """Every label on one axis: colour carries identity, line style carries arm.
+
+    Plotted at each tercile's true median length rather than at slot 1/2/3, so
+    the labels sit where they actually are on the length scale — which shows the
+    length/behaviour confound directly (`partial_problem_solving` lives entirely
+    to the right of `sabotage`).
+
+    Composite encoding rather than 12 hues: 6 colours x 2 line styles. Colours are
+    the reference categorical palette in fixed slot order, validated for the
+    lightness band, chroma floor, CVD separation and normal-vision separation.
+    Three of the six warn on contrast against this surface, so a legend is
+    mandatory rather than optional — identity is never carried by colour alone.
+    """
+    frames = _both_arms(results, baseline)
+    if frames is None:
+        return None
+    labels = sorted(
+        label for label in frames["global"]["label"].unique()
+        if label != "benign" and (frames["global"]["label"] == label).sum() >= 15
+    )
+    if not labels or len(labels) > len(CATEGORICAL):
+        return None
+
+    fig, ax = plt.subplots(figsize=(8.0, 4.8))
+    for tick in (0, 0.25, 0.5, 0.75, 1.0):
+        ax.axhline(tick, color=HAIRLINE, lw=0.8, zorder=0)
+
+    for slot, label in enumerate(labels):
+        colour = CATEGORICAL[slot]
+        base = frames["global"][frames["global"]["label"] == label]
+        edges = np.percentile(base["tokens"], [0, 33.3, 66.7, 100])
+        edges[-1] += 1
+        spans = list(zip(edges[:-1], edges[1:], strict=True))
+        for arm, dash, marker, fill in (
+            ("global", (0, (5, 3)), "o", PAPER),
+            ("chunk", None, "o", None),
+        ):
+            frame = frames[arm][frames[arm]["label"] == label]
+            xs, ys = [], []
+            for lo, hi in spans:
+                inside = frame[(frame["tokens"] >= lo) & (frame["tokens"] < hi)]
+                if inside.empty:
+                    continue
+                xs.append(float(inside["tokens"].median()))
+                ys.append(float((inside["score"] >= threshold).mean()))
+            ax.plot(xs, ys, ls=dash or "-", lw=2.0, color=colour, zorder=3,
+                    marker=marker, ms=6.5, markerfacecolor=fill or colour,
+                    markeredgecolor=colour, markeredgewidth=1.6,
+                    solid_capstyle="round")
+            # No end labels: at six series they collided at both extremes, and
+            # direct labelling is for <=4 series — the legend carries identity here.
+
+    ax.set_xscale("log")
+    ax.tick_params(axis="x", which="minor", length=0)
+    ax.set_xlim(1.4e3, 3.2e5)
+    ax.set_xticks([2e3, 5e3, 1e4, 2e4, 5e4, 1e5])
+    ax.set_xticklabels(["2k", "5k", "10k", "20k", "50k", "100k"])
+    ax.set_ylim(-0.05, 1.08)
+    ax.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
+    ax.set_xlabel("median transcript length of the tercile, in tokens (log scale)",
+                  fontsize=9.5, labelpad=8)
+    ax.set_ylabel(f"recall at threshold {threshold:g}", fontsize=9.5)
+
+    style_key = [
+        plt.Line2D([], [], color=MUTED, lw=2.0, marker="o", ms=6.5,
+                   markerfacecolor=MUTED, label="chunked"),
+        plt.Line2D([], [], color=MUTED, lw=2.0, ls=(0, (5, 3)), marker="o", ms=6.5,
+                   markerfacecolor=PAPER, markeredgecolor=MUTED, label="global"),
+    ]
+    colour_key = [
+        plt.Line2D([], [], color=CATEGORICAL[i], lw=2.6, label=_label(name))
+        for i, name in enumerate(labels)
+    ]
+    first = ax.legend(handles=style_key, loc="upper left", fontsize=9,
+                      handlelength=2.4, labelspacing=0.4)
+    ax.add_artist(first)
+    ax.legend(handles=colour_key, loc="lower center", bbox_to_anchor=(0.5, -0.30),
+              ncol=3, fontsize=8.5, handlelength=1.8, columnspacing=1.6,
+              labelspacing=0.4)
+
+    _title(
+        ax,
+        "Recall against transcript length, all labels",
+        f"terciles within each label · {len(labels)} behaviours · colour is the label, "
+        f"line style the arm\nlabels sit at their true lengths, so the spread across "
+        f"the x-axis is the length/behaviour confound",
+    )
+    return _save(fig, out / f"recall_by_length_combined.{fmt}")
+
+
 def calibration(out: Path, fmt: str, results: Path, baseline: Path,
                 threshold: float) -> Path | None:
     """Does a higher score mean a higher chance of being a real positive?
@@ -974,6 +1081,8 @@ def main() -> int:
         failure_modes(out, args.format, chunk_dir, global_dir, args.threshold),
         # length and calibration
         recall_by_length(out, args.format, chunk_dir, global_dir, args.threshold),
+        recall_by_length_combined(out, args.format, chunk_dir, global_dir,
+                                  args.threshold),
         calibration(out, args.format, chunk_dir, global_dir, args.threshold),
     ]
     made = [p for p in written if p]
