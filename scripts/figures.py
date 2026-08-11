@@ -41,7 +41,7 @@ GLOBAL_DARK = "#8A8177"
 CHUNK = "#0E7C7B"
 MEAN = "#DE8A3C"
 POSITIVE = "#C2415B"
-BENIGN = "#A9BAC6"
+BENIGN = "#2a78d6"  # validated against POSITIVE; see CATEGORICAL note
 
 # Categorical slots for per-label series, in fixed order — never cycled, never
 # reassigned when a label is filtered out. Taken from the dataviz reference
@@ -337,16 +337,8 @@ def score_scatter(out: Path, fmt: str, results: Path, threshold: float) -> Path 
         bbox={"boxstyle": "round,pad=0.5", "facecolor": PAPER,
               "edgecolor": "none", "alpha": 0.88},
     )
-    # Point at the lost run rather than labelling empty space near it.
-    if not lost.empty:
-        row = lost.iloc[0]
-        ax.annotate(
-            f"{len(lost)} lost", (row["score_baseline"], row["score_variant"]),
-            xytext=(-14, 26), textcoords="offset points", fontsize=10.5,
-            color=GLOBAL_DARK, ha="right", fontweight="demibold", zorder=6,
-            arrowprops={"arrowstyle": "-", "color": GLOBAL_DARK, "lw": 0.9,
-                        "shrinkA": 2, "shrinkB": 6},
-        )
+    # The lost run is still visible in the shaded lower-right quadrant and
+    # counted in the subtitle; the leader line crowded a corner for one point.
 
     ax.set_xlabel("global monitor score", fontsize=9.5, labelpad=8)
     ax.set_ylabel("chunked monitor score", fontsize=9.5, labelpad=8)
@@ -355,8 +347,8 @@ def score_scatter(out: Path, fmt: str, results: Path, threshold: float) -> Path 
     ax.set_xlim(-6, 106)
     ax.set_ylim(-6, 106)
     ax.set_aspect("equal")
-    # Below the axes: the plot is square and full of points, and any in-axes
-    # placement collided with the "lost" annotation in the lower-right quadrant.
+    # Below the axes: the plot is square and full of points, so any in-axes
+    # placement lands on data.
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.11), ncol=2,
               fontsize=9.5, handletextpad=0.3, markerscale=1.7, columnspacing=2.2)
 
@@ -368,22 +360,84 @@ def score_scatter(out: Path, fmt: str, results: Path, threshold: float) -> Path 
     shown = "< 0.0001" if pvalue < 0.0001 else f"= {pvalue:.4f}"
     benign_flagged = int((paired[~paired["is_positive"]]["score_variant"] >= threshold).sum())
     n_benign = int((~paired["is_positive"]).sum())
-    # Headline states the finding, like every other figure here, and is derived
-    # so it cannot go stale: the movement is almost entirely one-way, and the
-    # benign cloud does not move at all.
-    # Three variables are plotted — global score, chunked score, and ground
-    # truth as colour — so the headline names all three: which class moved, in
-    # which direction, and that the other class did not move at all. A purely
-    # descriptive title ("score by monitor type") would spend the most-read line
-    # restating the axis labels.
+    # Descriptive headline; the finding lives in the subtitle and is derived so
+    # it cannot go stale. Three variables are plotted — both scores and ground
+    # truth as colour — so the headline names the third rather than leaving the
+    # colouring unexplained.
     crossings = f"{len(lost)} crosses back" if len(lost) == 1 else f"{len(lost)} cross back"
     _title(
         ax,
-        "Global vs chunked monitor score",
+        "Global vs chunked monitor score, by ground truth",
+        f"{len(paired)} transcripts · threshold {threshold:g} · McNemar p {shown}\n"
         f"{recovered} sandbagging runs cross the threshold, {crossings}; "
         f"benign flagged {benign_flagged}/{n_benign} either way",
     )
     return _save(fig, out / f"score_scatter.{fmt}")
+
+
+def score_scatter_by_label(out: Path, fmt: str, results: Path,
+                           threshold: float) -> Path | None:
+    """The paired scatter again, with each behaviour label its own colour.
+
+    Benign runs stay a de-emphasised neutral rather than taking a seventh hue:
+    they are context here, not a series. Six meaningful colours plus a
+    background reads; seven competing hues is where adjacent classes blur.
+    """
+    path = results / "paired.csv"
+    if not path.is_file():
+        return None
+    paired = pd.read_csv(path)
+    paired["label"] = _primary_label(paired)
+    labels = sorted(
+        label for label in paired.loc[paired["is_positive"], "label"].unique()
+        if (paired["label"] == label).sum() >= 10
+    )
+    if not labels or len(labels) > len(CATEGORICAL):
+        return None
+
+    fig, ax = plt.subplots(figsize=(6.4, 6.4))
+    ax.add_patch(Polygon([(-6, threshold), (threshold, threshold), (threshold, 106),
+                          (-6, 106)], closed=True, facecolor=CHUNK, alpha=0.05,
+                         zorder=0, linewidth=0))
+    ax.add_patch(Polygon([(threshold, -6), (106, -6), (106, threshold),
+                          (threshold, threshold)], closed=True, facecolor=GLOBAL,
+                         alpha=0.05, zorder=0, linewidth=0))
+    for tick in (0, 25, 50, 75, 100):
+        ax.axhline(tick, color=HAIRLINE, lw=0.7, zorder=1)
+        ax.axvline(tick, color=HAIRLINE, lw=0.7, zorder=1)
+    ax.plot([-6, 106], [-6, 106], color=MUTED, lw=0.8, ls=(0, (4, 4)), zorder=2)
+
+    rng = np.random.default_rng(0)
+    benign = paired[~paired["is_positive"]]
+    ax.scatter(benign["score_baseline"] + rng.normal(0, 1.5, len(benign)),
+               benign["score_variant"] + rng.normal(0, 1.5, len(benign)),
+               s=15, alpha=0.35, color="#C7C2BA", label=f"benign ({len(benign)})",
+               zorder=3, linewidths=0)
+    for slot, label in enumerate(labels):
+        group = paired[(paired["is_positive"]) & (paired["label"] == label)]
+        ax.scatter(group["score_baseline"] + rng.normal(0, 1.5, len(group)),
+                   group["score_variant"] + rng.normal(0, 1.5, len(group)),
+                   s=26, alpha=0.75, color=CATEGORICAL[slot], zorder=4,
+                   edgecolor=PAPER, linewidth=0.4,
+                   label=f"{_label(label)} ({len(group)})")
+
+    ax.set_xlabel("global monitor score", fontsize=9.5, labelpad=8)
+    ax.set_ylabel("chunked monitor score", fontsize=9.5, labelpad=8)
+    ax.set_xticks([0, 25, 50, 75, 100])
+    ax.set_yticks([0, 25, 50, 75, 100])
+    ax.set_xlim(-6, 106)
+    ax.set_ylim(-6, 106)
+    ax.set_aspect("equal")
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.10), ncol=3, fontsize=8.5,
+              handletextpad=0.3, markerscale=1.6, columnspacing=1.4, labelspacing=0.5)
+    _title(
+        ax,
+        "Global vs chunked monitor score, by behaviour label",
+        f"{len(paired)} transcripts · threshold {threshold:g} · benign shown as "
+        f"context, not a series\nupper-left quadrant is where chunking recovers a "
+        f"run the global monitor missed",
+    )
+    return _save(fig, out / f"score_scatter_by_label.{fmt}")
 
 
 def fpr_by_length(out: Path, fmt: str, results: Path, baseline: Path) -> Path | None:
@@ -1323,6 +1377,7 @@ def main() -> int:
         recall_by_label(out, args.format, chunk_dir),
         aggregation(out, args.format, chunk_dir),
         score_scatter(out, args.format, chunk_dir, args.threshold),
+        score_scatter_by_label(out, args.format, chunk_dir, args.threshold),
         # failure modes
         positive_outcomes(out, args.format, chunk_dir),
         failure_modes(out, args.format, chunk_dir, global_dir, args.threshold),
