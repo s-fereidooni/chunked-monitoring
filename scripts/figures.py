@@ -367,10 +367,7 @@ def score_scatter(out: Path, fmt: str, results: Path, threshold: float) -> Path 
     crossings = f"{len(lost)} crosses back" if len(lost) == 1 else f"{len(lost)} cross back"
     _title(
         ax,
-        "Global vs chunked monitor score, by ground truth",
-        f"{len(paired)} transcripts · threshold {threshold:g} · McNemar p {shown}\n"
-        f"{recovered} sandbagging runs cross the threshold, {crossings}; "
-        f"benign flagged {benign_flagged}/{n_benign} either way",
+        "Global vs chunked monitor score"
     )
     return _save(fig, out / f"score_scatter.{fmt}")
 
@@ -1103,7 +1100,8 @@ _MIN_FN_FOR_SHARE = 10
 
 def _theme_heatmap(out: Path, fmt: str, frames: dict[str, pd.DataFrame],
                    selector, themes, filename: str, heading: str, subtitle: str,
-                   min_rows: int, empty_note: str = "none") -> Path | None:
+                   min_rows: int, empty_note: str = "none",
+                   drop_empty: bool = False) -> Path | None:
     """Label x theme grid per arm — shared by the false- and true-positive views.
 
     A heatmap rather than grouped bars: six themes across several labels and two
@@ -1116,7 +1114,9 @@ def _theme_heatmap(out: Path, fmt: str, frames: dict[str, pd.DataFrame],
     Rows are every behaviour label with enough positive runs to report, *not*
     only those with rows in this selection — so a label with zero detections
     still appears, marked empty. Dropping it would hide the strongest fact about
-    it.
+    it. `drop_empty` overrides that for views where an all-empty row is noise
+    rather than a finding; a label empty in one arm only is always kept, since
+    that asymmetry is the point of the comparison.
     """
     from matplotlib.colors import LinearSegmentedColormap
 
@@ -1131,7 +1131,8 @@ def _theme_heatmap(out: Path, fmt: str, frames: dict[str, pd.DataFrame],
     universe = positives.groupby("label").size() / len(frames)
     order = pooled.groupby("label").size()
     labels = sorted(
-        (label for label, n in universe.items() if n >= min_rows),
+        (label for label, n in universe.items()
+         if n >= min_rows and (not drop_empty or order.get(label, 0) > 0)),
         key=lambda label: -order.get(label, 0),
     )
     if not labels:
@@ -1213,10 +1214,6 @@ def failure_modes_by_label(out: Path, fmt: str, results: Path, baseline: Path,
         out, fmt, frames,
         lambda f: f[(f["is_positive"]) & (f["score"] < threshold)],
         FAILURE_THEMES, "failure_modes_by_label",
-        "Stated rationale on false negatives, by label",
-        "share of that label's missed runs · categories overlap · faded italic rows\n"
-        f"have fewer than {_MIN_FN_FOR_SHARE} misses, where one run moves the figure "
-        "by 14-33 points",
         _MIN_FN_FOR_SHARE,
     )
 
@@ -1226,7 +1223,9 @@ def true_positives_by_label(out: Path, fmt: str, results: Path, baseline: Path,
     """Rationale categories on correct detections, broken out by behaviour label.
 
     Only four labels appear: `reasoning_about_task` and `gives_up` have zero true
-    positives in either arm, so there is nothing to characterise.
+    positives in *either* arm, so they carry no rationale text and are dropped
+    rather than shown as two empty rows. That both are undetected is a real
+    finding, but it belongs to the recall figures, not this one.
     """
     frames = _both_arms(results, baseline)
     if frames is None:
@@ -1241,6 +1240,7 @@ def true_positives_by_label(out: Path, fmt: str, results: Path, baseline: Path,
         f"have fewer than {_MIN_FN_FOR_SHARE} detections",
         _MIN_FN_FOR_SHARE,
         empty_note="no true positives — nothing detected to characterise",
+        drop_empty=True,
     )
 
 
