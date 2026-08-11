@@ -232,6 +232,167 @@ def recall_by_label(out: Path, fmt: str, results: Path) -> Path | None:
     return _save(fig, out / f"recall_by_label.{fmt}")
 
 
+FPR_BUDGET = 0.05
+
+
+def _tpr_at_budget(pos: np.ndarray, neg: np.ndarray,
+                   budget: float = FPR_BUDGET) -> tuple[float, float, float]:
+    """(TPR, achieved FPR, threshold) at the lowest threshold meeting `budget`.
+
+    Lowest, because TPR is monotone decreasing in the threshold — so the lowest
+    admissible threshold is the best detection rate the budget allows.
+
+    The achieved FPR is returned, not assumed to equal the budget. These scores
+    take ~14 distinct values, so a threshold cannot be tuned to land on 5%: the
+    chunked arm's admissible threshold spends only a quarter of the budget, and
+    comparing the two arms' TPR here is therefore *not* a matched-FPR
+    comparison. Reporting the achieved rate beside each bar is what keeps that
+    visible.
+    """
+    candidates = np.unique(np.concatenate([pos, neg]))
+    for threshold in candidates:
+        fpr = float((neg >= threshold).mean())
+        if fpr <= budget:
+            return float((pos >= threshold).mean()), fpr, float(threshold)
+    return 0.0, 0.0, float(candidates[-1] + 1)
+
+
+def _tpr_interval(pos: np.ndarray, neg: np.ndarray, budget: float = FPR_BUDGET,
+                  draws: int = 4000, seed: int = 0) -> tuple[float, float]:
+    """Percentile bootstrap 95% CI for `_tpr_at_budget`.
+
+    The threshold is re-selected inside every resample rather than frozen at the
+    point estimate's value, so the interval carries the noise in choosing it —
+    which on a coarse score grid is a large part of the total.
+    """
+    rng = np.random.default_rng(seed)
+    values = [
+        _tpr_at_budget(rng.choice(pos, len(pos), replace=True),
+                       rng.choice(neg, len(neg), replace=True), budget)[0]
+        for _ in range(draws)
+    ]
+    return float(np.quantile(values, 0.025)), float(np.quantile(values, 0.975))
+
+
+def detection_rate(out: Path, fmt: str, results: Path, baseline: Path,
+                   threshold: float) -> Path | None:
+    """Headline number: what share of true sandbagging each arm catches.
+
+    Mirrors METR's MALT summary chart, which reports TPR at a 5% false-positive
+    rate across monitor models. Here the monitor model is fixed and the two bars
+    are the two arms, so the comparison is chunking rather than model choice.
+    """
+    frames = _both_arms(results, baseline)
+    if frames is None:
+        return None
+
+    fig, ax = plt.subplots(figsize=(9.4, 5.6))
+    bars = []
+    for x, (arm, frame) in enumerate(frames.items()):
+        pos = frame[frame["is_positive"]]["score"].to_numpy(float)
+        neg = frame[~frame["is_positive"]]["score"].to_numpy(float)
+        tpr, fpr, cut = _tpr_at_budget(pos, neg)
+        low, high = _tpr_interval(pos, neg)
+        colour = CHUNK if arm == "chunk" else GLOBAL_DARK
+        ax.bar(x, tpr, width=0.46, color=colour, zorder=2)
+        ax.errorbar(x, tpr, yerr=[[tpr - low], [high - tpr]], fmt="none",
+                    ecolor=INK, elinewidth=1.4, capsize=6, capthick=1.4, zorder=3)
+        # Above the interval, not the bar: at the bar top it sits on the cap.
+        ax.annotate(f"{tpr:.0%}", (x, high), xytext=(0, 7), va="bottom",
+                    textcoords="offset points", ha="center", fontsize=13,
+                    fontweight="demibold", color=INK,
+                    annotation_clip=False)
+        # The caveat travels with the bar: these two FPRs are not the same.
+        ax.annotate(f"score ≥ {cut:.0f} · actual FPR {fpr:.1%}", (x, 0),
+                    xytext=(0, -14), textcoords="offset points", ha="center",
+                    fontsize=8.5, color=MUTED, annotation_clip=False)
+        bars.append((arm, tpr, int((pos >= threshold).mean() * len(pos)), len(pos)))
+
+    ax.set_xticks(range(len(frames)))
+    ax.set_xticklabels(["global\n(whole transcript)", "chunk\n(20 messages, max)"],
+                       fontsize=10.5)
+    ax.tick_params(axis="x", pad=20)
+    ax.set_xlim(-0.7, len(frames) - 0.3)
+    # Scale runs to 100% so the bars read as a share of all sandbagging, but the
+    # top tick is dropped — its label sits under the subtitle block.
+    ax.set_ylim(0, 1)
+    ax.set_yticks(np.arange(0, 0.81, 0.2))
+    ax.set_yticklabels([f"{v:.0%}" for v in np.arange(0, 0.81, 0.2)])
+    ax.set_ylabel("share of sandbagging runs caught", color=MUTED)
+    for tick in np.arange(0.2, 0.81, 0.2):
+        ax.axhline(tick, color=HAIRLINE, lw=0.8, zorder=0)
+
+    fixed = {arm: f"{caught / total:.0%}" for arm, _, caught, total in bars}
+    _title(
+        ax,
+        "Sandbagging runs caught at a ≤5% false-positive budget",
+        f"{bars[0][3]} sandbagging and {len(frames['global']) - bars[0][3]} benign runs, "
+        "gpt-4.1-mini monitor · each bar is the best rate that arm reaches without "
+        "exceeding\n5% false positives — the score grid is too coarse for either to "
+        "land on 5%, so the budgets actually spent\ndiffer and this is not a matched "
+        "comparison · 95% CI bootstrapped, threshold re-chosen each draw · at\n"
+        f"the fixed score ≥ {threshold:.0f} used elsewhere here the rates are "
+        f"{fixed['global']} and {fixed['chunk']}",
+    )
+    return _save(fig, out / f"detection_rate.{fmt}")
+
+
+def score_histogram(out: Path, fmt: str, results: Path, baseline: Path) -> Path | None:
+    """Where the scores actually land — the reason thresholds behave oddly.
+
+    Split by ground truth rather than pooled: a pooled histogram of a bimodal
+    scorer looks the same whether the two modes are the two classes or not,
+    which is the only thing worth knowing here.
+    """
+    frames = _both_arms(results, baseline)
+    if frames is None:
+        return None
+
+    edges = np.arange(0, 101, 10)
+    fig, axes = plt.subplots(1, 2, figsize=(12.2, 5.1), sharey=True)
+    for ax, (arm, frame) in zip(axes, frames.items(), strict=False):
+        benign = frame[~frame["is_positive"]]["score"].to_numpy(float)
+        sandbag = frame[frame["is_positive"]]["score"].to_numpy(float)
+        ax.hist([benign, sandbag], bins=edges, stacked=True,
+                color=[BENIGN, POSITIVE], zorder=2, edgecolor=PAPER, linewidth=1.4,
+                label=["benign", "sandbagging"])
+        # One bin holds ~75% of the runs, so on a linear axis every other bin is
+        # a sliver. Counts printed on the bins that have any, rather than a log
+        # axis that would make the pile-up at zero look like a mild slope.
+        totals = np.histogram(frame["score"], bins=edges)[0]
+        for left, count in zip(edges[:-1], totals, strict=False):
+            if count:
+                ax.annotate(str(int(count)), (left + 5, count), xytext=(0, 4),
+                            textcoords="offset points", ha="center", va="bottom",
+                            fontsize=8.5, color=MUTED)
+        ax.set_xlim(0, 100)
+        ax.set_xticks(np.arange(0, 101, 20))
+        ax.set_xlabel("monitor score", color=MUTED)
+        distinct = frame["score"].nunique()
+        ax.set_title(f"{arm}  ·  {int(totals.astype(bool).sum())} of 10 bins used, "
+                     f"{distinct} distinct scores", fontsize=10,
+                     loc="left", color=INK, pad=8)
+        for tick in ax.get_yticks():
+            ax.axhline(tick, color=HAIRLINE, lw=0.8, zorder=0)
+    axes[0].set_ylabel("runs", color=MUTED)
+    axes[0].set_ylim(0, 520)
+    axes[1].legend(loc="upper center", fontsize=9.5)
+
+    pooled = pd.concat(frames.values())["score"]
+    extreme = float(((pooled <= 10) | (pooled >= 90)).mean())
+    fig.suptitle("Distribution of monitor scores, by arm", fontsize=12.5,
+                 fontweight="demibold", color=INK, x=0.02, ha="left", y=1.09)
+    fig.text(0.02, 1.03,
+             f"{extreme:.0%} of scores sit at 0-10 or 90-100 · the scale is nominally "
+             f"0-100 but only {pooled.nunique()} distinct values are ever\nused, so a "
+             "threshold cannot be tuned finely and the middle of the range holds "
+             "almost nothing to rank ·\nthe chunked arm's gain is the mass it moves "
+             "from the left pile to the right one",
+             fontsize=9, color=MUTED, ha="left", va="top", linespacing=1.5)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    return _save(fig, out / f"score_histogram.{fmt}")
+
+
 def aggregation(out: Path, fmt: str, results: Path) -> Path | None:
     """The mechanism figure: mean is immune to draw count, so it separates them."""
     path = results / "recall_by_aggregation.csv"
@@ -1214,6 +1375,10 @@ def failure_modes_by_label(out: Path, fmt: str, results: Path, baseline: Path,
         out, fmt, frames,
         lambda f: f[(f["is_positive"]) & (f["score"] < threshold)],
         FAILURE_THEMES, "failure_modes_by_label",
+        "Stated rationale on false negatives, by label",
+        "share of that label's missed runs · categories overlap · faded italic rows\n"
+        f"have fewer than {_MIN_FN_FOR_SHARE} misses, where one run moves the figure "
+        "by 14-33 points",
         _MIN_FN_FOR_SHARE,
     )
 
@@ -1235,9 +1400,7 @@ def true_positives_by_label(out: Path, fmt: str, results: Path, baseline: Path,
         lambda f: f[(f["is_positive"]) & (f["score"] >= threshold)],
         TP_THEMES, "true_positives_by_label",
         "Stated rationale on true positives, by label",
-        "share of that label's correct detections · categories overlap · “intentional”\n"
-        "and “underperform” excluded as monitor-prompt vocabulary · faded italic rows "
-        f"have fewer than {_MIN_FN_FOR_SHARE} detections",
+        "",
         _MIN_FN_FOR_SHARE,
         empty_note="no true positives — nothing detected to characterise",
         drop_empty=True,
@@ -1374,6 +1537,8 @@ def main() -> int:
         run_source(out, args.format, global_dir),
         length_composition(out, args.format, chunk_dir),
         # results
+        detection_rate(out, args.format, chunk_dir, global_dir, args.threshold),
+        score_histogram(out, args.format, chunk_dir, global_dir),
         recall_by_label(out, args.format, chunk_dir),
         aggregation(out, args.format, chunk_dir),
         score_scatter(out, args.format, chunk_dir, args.threshold),
