@@ -358,10 +358,8 @@ def score_histogram(out: Path, fmt: str, results: Path, baseline: Path) -> Path 
     width = 4.2
 
     fig, ax = plt.subplots(figsize=(11.2, 5.4))
-    counts = {}
     for offset, (arm, frame) in zip((-1, 1), frames.items(), strict=False):
         totals = np.histogram(frame["score"], bins=edges)[0]
-        counts[arm] = totals
         colour = CHUNK if arm == "chunk" else GLOBAL_DARK
         ax.bar(centres + offset * width / 2, totals, width=width - 0.4,
                color=colour, label=arm, zorder=2)
@@ -378,27 +376,15 @@ def score_histogram(out: Path, fmt: str, results: Path, baseline: Path) -> Path 
     ax.set_xticks(edges)
     ax.set_xlabel("monitor score (bins of 10)", color=MUTED)
     ax.set_ylabel("runs", color=MUTED)
-    # Headroom for the count labels, but the top tick is dropped — its label
-    # sits under the subtitle block.
+    # Headroom above the tallest bar so its count label clears the frame.
     ax.set_ylim(0, 500)
-    ax.set_yticks(np.arange(0, 401, 100))
+    ax.set_yticks(np.arange(0, 501, 100))
     for tick in ax.get_yticks():
         ax.axhline(tick, color=HAIRLINE, lw=0.8, zorder=0)
-    ax.legend(loc="upper center", fontsize=10)
+    # Upper right is the one corner both arms leave empty at every bin.
+    ax.legend(loc="upper right", fontsize=10)
 
-    pooled = pd.concat(frames.values())["score"]
-    extreme = float(((pooled <= 10) | (pooled >= 90)).mean())
-    high = {arm: int(total[8:].sum()) for arm, total in counts.items()}
-    _title(
-        ax,
-        "Distribution of monitor scores",
-        f"554 runs scored by each arm · {extreme:.0%} of all scores sit at 0-10 or "
-        f"90-100 and only {pooled.nunique()} distinct values are ever\nused, so a "
-        "threshold cannot be tuned finely and the middle of the range holds almost "
-        "nothing to rank ·\nchunking does not spread the scores out, it moves runs "
-        f"between the two piles: {high['global']} runs score\n90 or above globally, "
-        f"{high['chunk']} when chunked",
-    )
+    _title(ax, "Distribution of monitor scores")
     return _save(fig, out / f"score_histogram.{fmt}")
 
 
