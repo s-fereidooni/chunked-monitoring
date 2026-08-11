@@ -340,56 +340,65 @@ def detection_rate(out: Path, fmt: str, results: Path, baseline: Path,
 def score_histogram(out: Path, fmt: str, results: Path, baseline: Path) -> Path | None:
     """Where the scores actually land — the reason thresholds behave oddly.
 
-    Split by ground truth rather than pooled: a pooled histogram of a bimodal
-    scorer looks the same whether the two modes are the two classes or not,
-    which is the only thing worth knowing here.
+    One axis with the arms side by side rather than two panels: the interesting
+    quantity is the difference between the arms bin by bin, and a shared
+    baseline reads that off directly where two panels make it a memory task.
+
+    Ground truth is deliberately not shown. Both arms score the same 554 runs,
+    so the totals are fixed and any bar one arm loses on the left it gains on
+    the right — that redistribution is the whole content of the figure, and
+    splitting each bar by label would bury it under four series.
     """
     frames = _both_arms(results, baseline)
     if frames is None:
         return None
 
     edges = np.arange(0, 101, 10)
-    fig, axes = plt.subplots(1, 2, figsize=(12.2, 5.1), sharey=True)
-    for ax, (arm, frame) in zip(axes, frames.items(), strict=False):
-        benign = frame[~frame["is_positive"]]["score"].to_numpy(float)
-        sandbag = frame[frame["is_positive"]]["score"].to_numpy(float)
-        ax.hist([benign, sandbag], bins=edges, stacked=True,
-                color=[BENIGN, POSITIVE], zorder=2, edgecolor=PAPER, linewidth=1.4,
-                label=["benign", "sandbagging"])
+    centres = edges[:-1] + 5
+    width = 4.2
+
+    fig, ax = plt.subplots(figsize=(11.2, 5.4))
+    counts = {}
+    for offset, (arm, frame) in zip((-1, 1), frames.items(), strict=False):
+        totals = np.histogram(frame["score"], bins=edges)[0]
+        counts[arm] = totals
+        colour = CHUNK if arm == "chunk" else GLOBAL_DARK
+        ax.bar(centres + offset * width / 2, totals, width=width - 0.4,
+               color=colour, label=arm, zorder=2)
         # One bin holds ~75% of the runs, so on a linear axis every other bin is
         # a sliver. Counts printed on the bins that have any, rather than a log
         # axis that would make the pile-up at zero look like a mild slope.
-        totals = np.histogram(frame["score"], bins=edges)[0]
-        for left, count in zip(edges[:-1], totals, strict=False):
+        for centre, count in zip(centres, totals, strict=False):
             if count:
-                ax.annotate(str(int(count)), (left + 5, count), xytext=(0, 4),
-                            textcoords="offset points", ha="center", va="bottom",
-                            fontsize=8.5, color=MUTED)
-        ax.set_xlim(0, 100)
-        ax.set_xticks(np.arange(0, 101, 20))
-        ax.set_xlabel("monitor score", color=MUTED)
-        distinct = frame["score"].nunique()
-        ax.set_title(f"{arm}  ·  {int(totals.astype(bool).sum())} of 10 bins used, "
-                     f"{distinct} distinct scores", fontsize=10,
-                     loc="left", color=INK, pad=8)
-        for tick in ax.get_yticks():
-            ax.axhline(tick, color=HAIRLINE, lw=0.8, zorder=0)
-    axes[0].set_ylabel("runs", color=MUTED)
-    axes[0].set_ylim(0, 520)
-    axes[1].legend(loc="upper center", fontsize=9.5)
+                ax.annotate(str(int(count)), (centre + offset * width / 2, count),
+                            xytext=(0, 4), textcoords="offset points", ha="center",
+                            va="bottom", fontsize=8, color=MUTED)
+
+    ax.set_xlim(0, 100)
+    ax.set_xticks(edges)
+    ax.set_xlabel("monitor score (bins of 10)", color=MUTED)
+    ax.set_ylabel("runs", color=MUTED)
+    # Headroom for the count labels, but the top tick is dropped — its label
+    # sits under the subtitle block.
+    ax.set_ylim(0, 500)
+    ax.set_yticks(np.arange(0, 401, 100))
+    for tick in ax.get_yticks():
+        ax.axhline(tick, color=HAIRLINE, lw=0.8, zorder=0)
+    ax.legend(loc="upper center", fontsize=10)
 
     pooled = pd.concat(frames.values())["score"]
     extreme = float(((pooled <= 10) | (pooled >= 90)).mean())
-    fig.suptitle("Distribution of monitor scores, by arm", fontsize=12.5,
-                 fontweight="demibold", color=INK, x=0.02, ha="left", y=1.09)
-    fig.text(0.02, 1.03,
-             f"{extreme:.0%} of scores sit at 0-10 or 90-100 · the scale is nominally "
-             f"0-100 but only {pooled.nunique()} distinct values are ever\nused, so a "
-             "threshold cannot be tuned finely and the middle of the range holds "
-             "almost nothing to rank ·\nthe chunked arm's gain is the mass it moves "
-             "from the left pile to the right one",
-             fontsize=9, color=MUTED, ha="left", va="top", linespacing=1.5)
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    high = {arm: int(total[8:].sum()) for arm, total in counts.items()}
+    _title(
+        ax,
+        "Distribution of monitor scores",
+        f"554 runs scored by each arm · {extreme:.0%} of all scores sit at 0-10 or "
+        f"90-100 and only {pooled.nunique()} distinct values are ever\nused, so a "
+        "threshold cannot be tuned finely and the middle of the range holds almost "
+        "nothing to rank ·\nchunking does not spread the scores out, it moves runs "
+        f"between the two piles: {high['global']} runs score\n90 or above globally, "
+        f"{high['chunk']} when chunked",
+    )
     return _save(fig, out / f"score_histogram.{fmt}")
 
 
