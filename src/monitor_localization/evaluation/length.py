@@ -17,7 +17,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from monitor_localization.dataset.schema import BENIGN_LABEL
+from monitor_localization.dataset.schema import BENIGN_LABEL, behavior_labels
 from monitor_localization.evaluation.metrics import DEFAULT_THRESHOLD
 
 # Measured on 36 real MALT transcripts with o200k_base (aggregate 4.40).
@@ -54,7 +54,7 @@ def length_by_label(table: pd.DataFrame) -> pd.DataFrame:
     frame = add_length_columns(table)
     frame = frame[frame["tokens"].notna()].copy()
     frame["label_list"] = frame["labels"].apply(
-        lambda s: [x for x in str(s).split(";") if x and x != BENIGN_LABEL] or [BENIGN_LABEL]
+        lambda s: behavior_labels(str(s)) or [BENIGN_LABEL]
     )
     exploded = frame.explode("label_list")
 
@@ -88,7 +88,7 @@ def score_vs_length(table: pd.DataFrame) -> pd.DataFrame:
     frame = add_length_columns(table)
     frame = frame[frame["tokens"].notna()].copy()
     frame["label_list"] = frame["labels"].apply(
-        lambda s: [x for x in str(s).split(";") if x and x != BENIGN_LABEL] or [BENIGN_LABEL]
+        lambda s: behavior_labels(str(s)) or [BENIGN_LABEL]
     )
     exploded = frame.explode("label_list")
 

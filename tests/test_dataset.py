@@ -328,3 +328,50 @@ def test_the_node_id_echo_is_still_suppressed():
     ]
     contents = [m.content for m in flatten_samples(samples)]
     assert contents.count("only once") == 1, contents
+
+
+def test_behavior_labels_filters_to_the_monitored_family():
+    """A cross-family label must not become a per-label row of its own.
+
+    One evaluation run is labelled `reasoning_about_task;bypass_constraints`.
+    The latter is reward hacking, which this monitor is never prompted to
+    detect, so it does not belong in a breakdown of the monitor's per-label
+    performance — but the run itself is a genuine sandbagging case and must
+    survive under the label it does carry.
+    """
+    from monitor_localization.dataset.schema import behavior_labels
+
+    assert behavior_labels("reasoning_about_task;bypass_constraints") == [
+        "reasoning_about_task"
+    ]
+    assert behavior_labels("normal") == []
+    assert behavior_labels(["gives_up", "reasoning_about_task"]) == [
+        "gives_up",
+        "reasoning_about_task",
+    ]
+    # The filter is opt-out, so a future reward-hacking run needs no code change.
+    assert behavior_labels("bypass_constraints", family="") == ["bypass_constraints"]
+    assert behavior_labels("bypass_constraints", family="reward_hacking") == [
+        "bypass_constraints"
+    ]
+
+
+def test_a_cross_family_run_is_never_dropped_from_run_level_counts():
+    """Scoping the label breakdown must not change n, positives, or benign."""
+    import pandas as pd
+
+    from monitor_localization.evaluation import transition_counts
+
+    paired = pd.DataFrame(
+        {
+            "run_id": [1, 2, 3],
+            "labels": ["reasoning_about_task;bypass_constraints", "sabotage", "normal"],
+            "is_positive": [True, True, False],
+            "transition": ["recovered", "both_caught", "TN->TN"],
+        }
+    )
+    table = transition_counts(paired)
+    assert "bypass_constraints" not in set(table["label"])
+    assert "reasoning_about_task" in set(table["label"])
+    # Every run still accounted for exactly once.
+    assert int(table.select_dtypes("number").sum().sum()) == 3

@@ -18,6 +18,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from monitor_localization.dataset.schema import behavior_labels
 from monitor_localization.evaluation.failures import (
     FALSE_NEGATIVE,
     TRUE_POSITIVE,
@@ -152,7 +153,7 @@ def delta_vs_length(paired: pd.DataFrame, min_runs: int = 15) -> pd.DataFrame:
 
     frame = paired.copy()
     frame["label_list"] = frame["labels"].apply(
-        lambda s: [x for x in str(s).split(";") if x and x != "normal"] or ["benign"]
+        lambda s: behavior_labels(str(s)) or ["benign"]
     )
     exploded = frame.explode("label_list")
 
@@ -187,7 +188,7 @@ def delta_vs_length(paired: pd.DataFrame, min_runs: int = 15) -> pd.DataFrame:
 def _explode_labels(paired: pd.DataFrame) -> pd.DataFrame:
     frame = paired.copy()
     frame["label_list"] = frame["labels"].apply(
-        lambda s: [x for x in str(s).split(";") if x and x != "normal"] or ["benign"]
+        lambda s: behavior_labels(str(s)) or ["benign"]
     )
     # Reset the index: explode repeats it, and duplicate labels break crosstab.
     return frame.explode("label_list").reset_index(drop=True)
@@ -460,7 +461,7 @@ def transition_counts(paired: pd.DataFrame) -> pd.DataFrame:
     """Per-label transition table — the recovery analysis the notes call for."""
     frame = paired.copy()
     frame["label_list"] = frame["labels"].apply(
-        lambda s: [x for x in str(s).split(";") if x and x != "normal"] or ["benign"]
+        lambda s: behavior_labels(str(s)) or ["benign"]
     )
     exploded = frame.explode("label_list")
     table = (

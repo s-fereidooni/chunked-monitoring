@@ -6,6 +6,7 @@ Mirrors the on-disk schema of `metr-evals/malt-public` (config `default`, split
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -70,6 +71,33 @@ def label_group(label: str) -> str:
         if label in members:
             return group
     return "unknown"
+
+
+MONITORED_FAMILY = "sandbagging_sabotage"
+
+
+def behavior_labels(labels: str | Sequence[str], family: str = MONITORED_FAMILY) -> list[str]:
+    """A run's in-scope behavior labels, empty for a benign run.
+
+    Accepts either the `;`-joined form used in result CSVs or a list.
+
+    Filtered to the family the monitor was *prompted* for. A run may carry labels
+    from another family — one in the evaluation subset carries
+    `bypass_constraints`, which is reward hacking — and the sandbagging monitor
+    was never asked to detect those, so they do not belong in a per-label
+    breakdown of its performance. Such a run is not dropped: it is still counted
+    under whichever in-scope label it also carries, and still appears in every
+    run-level statistic.
+
+    Pass `family=""` to disable the filter and get every non-benign label.
+    """
+    if isinstance(labels, str):
+        labels = [x for x in labels.split(";") if x]
+    return [
+        label
+        for label in labels
+        if label != BENIGN_LABEL and (not family or label_group(label) == family)
+    ]
 
 
 @dataclass(slots=True)

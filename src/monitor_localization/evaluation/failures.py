@@ -16,7 +16,7 @@ from typing import Any
 
 import pandas as pd
 
-from monitor_localization.dataset.schema import BENIGN_LABEL, label_group
+from monitor_localization.dataset.schema import BENIGN_LABEL, behavior_labels, label_group
 from monitor_localization.evaluation.metrics import DEFAULT_THRESHOLD
 
 # Outcome codes, matching the notes' TP/FP/TN/FN vocabulary.
@@ -151,9 +151,7 @@ def recall_by_label(table: pd.DataFrame) -> pd.DataFrame:
     positives = table[table["is_positive"] & (table["outcome"] != FAILED)].copy()
     if positives.empty:
         return pd.DataFrame(columns=["label", "n", "detected", "recall"])
-    positives["label"] = positives["labels"].apply(
-        lambda s: [x for x in s.split(";") if x and x != BENIGN_LABEL]
-    )
+    positives["label"] = positives["labels"].apply(behavior_labels)
     exploded = positives.explode("label").dropna(subset=["label"])
     exploded["detected"] = exploded["outcome"] == TRUE_POSITIVE
     grouped = (
