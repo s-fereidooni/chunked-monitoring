@@ -27,7 +27,6 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter
-from pathlib import Path
 from typing import Any
 
 from monitor_localization.config import ExperimentConfig
@@ -307,7 +306,7 @@ def audit_results(audit: Audit, cfg, run_ids: list[int]) -> None:
         if not path.is_file():
             audit.record(WARN, f"{stage} results present", f"{path} does not exist")
             continue
-        rows = [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+        rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
         ids = [r["run_id"] for r in rows]
         audit.check(
             len(ids) == len(set(ids)), f"{stage}: no duplicate run_ids",
@@ -347,8 +346,8 @@ def audit_metrics(audit: Audit, cfg) -> None:
     rows = {}
     for stage in ("global", "chunk"):
         p = ExperimentRun(cfg, stage=stage).results_path
-        rows[stage] = {json.loads(l)["run_id"]: json.loads(l)
-                       for l in p.read_text().splitlines() if l.strip()}
+        rows[stage] = {json.loads(line)["run_id"]: json.loads(line)
+                       for line in p.read_text().splitlines() if line.strip()}
     shared = set(rows["global"]) & set(rows["chunk"])
     positives = [r for r in shared if rows["global"][r].get("is_positive")]
     recovered = sum(1 for r in positives
@@ -370,7 +369,7 @@ def audit_metrics(audit: Audit, cfg) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="stripped")
+    parser.add_argument("--config", default="fixed")
     parser.add_argument("--limit", type=int, default=None,
                         help="audit only the first N runs (round-trip is the slow part)")
     args = parser.parse_args()

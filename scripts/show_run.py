@@ -66,7 +66,7 @@ def _results(run: ExperimentRun) -> dict[int, dict]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run_id", type=int, nargs="?", default=None)
-    parser.add_argument("--config", default="default")
+    parser.add_argument("--config", default="fixed")
     parser.add_argument(
         "--recovered", action="store_true",
         help="pick the largest recovery instead of naming a run_id",
@@ -133,7 +133,8 @@ def main() -> int:
     print(f"  run_source    {transcript.run_source}")
     print(f"  model         {transcript.model}")
     print(f"  messages      {transcript.n_messages}")
-    print(f"  characters    {transcript.n_characters:,} (~{transcript.n_characters / 4.4:,.0f} tokens)")
+    print(f"  characters    {transcript.n_characters:,} "
+          f"(~{transcript.n_characters / 4.4:,.0f} tokens)")
 
     count = transcript.n_messages if args.all else min(args.messages, transcript.n_messages)
     cap = None if args.all else args.chars
@@ -147,7 +148,7 @@ def main() -> int:
         if cap is not None and len(body) > cap:
             print(f"\n  … {len(body) - cap:,} more characters (raise --chars or use --all)")
         if hits:
-            print(f"\n  directive phrases matched in this message:")
+            print("\n  directive phrases matched in this message:")
             for hit in hits[:12]:
                 print(f"    · {hit.group(0)!r}  at char {hit.start():,}")
 

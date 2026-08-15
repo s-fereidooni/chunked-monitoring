@@ -83,7 +83,7 @@ def length_stats(run_ids: list[int]) -> pd.DataFrame:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="default", help="config name or path")
+    parser.add_argument("--config", default="fixed", help="config name or path")
     parser.add_argument(
         "--with-lengths",
         action="store_true",

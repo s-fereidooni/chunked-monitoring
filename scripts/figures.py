@@ -23,6 +23,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import Polygon, Rectangle  # noqa: E402
 
 from monitor_localization.config import ExperimentConfig  # noqa: E402
+from monitor_localization.dataset.schema import behavior_labels  # noqa: E402
 from monitor_localization.evaluation import DEFAULT_THRESHOLD  # noqa: E402
 from monitor_localization.experiment import ExperimentRun  # noqa: E402
 from monitor_localization.utils import setup_logging  # noqa: E402
@@ -214,21 +215,7 @@ def recall_by_label(out: Path, fmt: str, results: Path) -> Path | None:
                 textcoords="offset points", ha="center", fontsize=9.5,
                 color=CHUNK, fontweight="demibold")
 
-    # Derived from the data rather than written in: the counts changed between
-    # runs and a hardcoded headline silently went stale.
-    big = int((table["delta"] >= 0.20).sum())
-    floor = int((table["chunk_max"] < 0.15).sum())
-    # Rows are per label, so summing n double-counts multi-label runs and omits
-    # labels below the reporting floor. Take the run-level count instead.
-    paired_path = results / "paired.csv"
-    n_positive = 0
-    if paired_path.is_file():
-        paired = pd.read_csv(paired_path)
-        n_positive = int(paired["is_positive"].sum())
-    _title(
-        ax,
-        "Recall by behaviour label, global vs chunked",
-    )
+    _title(ax, "Recall by behaviour label, global vs chunked")
     return _save(fig, out / f"recall_by_label.{fmt}")
 
 
@@ -360,7 +347,11 @@ def score_histogram(out: Path, fmt: str, results: Path, baseline: Path) -> Path 
     fig, ax = plt.subplots(figsize=(11.2, 5.4))
     for offset, (arm, frame) in zip((-1, 1), frames.items(), strict=False):
         totals = np.histogram(frame["score"], bins=edges)[0]
-        colour = CHUNK if arm == "chunk" else GLOBAL_DARK
+        # GLOBAL, not GLOBAL_DARK: measured against CHUNK on this surface,
+        # GLOBAL_DARK sits at OKLab dE 12.5 for normal vision (floor 15) and
+        # 4.7 under protanopia (floor 8) — the two series are not separable.
+        # GLOBAL passes every check at dE >= 21.
+        colour = CHUNK if arm == "chunk" else GLOBAL
         ax.bar(centres + offset * width / 2, totals, width=width - 0.4,
                color=colour, label=arm, zorder=2)
         # One bin holds ~75% of the runs, so on a linear axis every other bin is
@@ -386,6 +377,110 @@ def score_histogram(out: Path, fmt: str, results: Path, baseline: Path) -> Path 
 
     _title(ax, "Distribution of monitor scores")
     return _save(fig, out / f"score_histogram.{fmt}")
+
+
+def score_shift_by_label(out: Path, fmt: str, results: Path,
+                         threshold: float) -> Path | None:
+    """Where each arm's scores land, per behaviour — small multiples of the histogram.
+
+    `score_histogram` pools all 554 runs, which hides the thing worth seeing: the
+    arms do not shift by the same amount everywhere, and for two labels they do
+    not shift at all. Faceting is the honest form because the pooled bars are a
+    weighted average over behaviours that respond completely differently.
+
+    Not the paired scatter: `reasoning_about_task` takes three distinct values
+    across both arms (0, 5, 10), so 49 of its 53 runs land on the same point and
+    the scatter shows one dot. Not a boxplot either — with three distinct values
+    quartiles imply a continuity the data does not have.
+
+    Panels are ordered by how far the chunked arm moved, so the figure reads
+    top-left to bottom-right as "chunking does everything" to "chunking does
+    nothing".
+    """
+    path = results / "paired.csv"
+    if not path.is_file():
+        return None
+    paired = pd.read_csv(path)
+    positives = paired[paired["is_positive"]].copy()
+    if positives.empty:
+        return None
+
+    labels = sorted({label for row in positives["labels"].fillna("")
+                     for label in behavior_labels(str(row))})
+    panels = [(label, positives[positives["labels"].fillna("").str.contains(label)])
+              for label in labels]
+    panels = [(label, group) for label, group in panels if len(group) >= 10]
+    if not panels:
+        return None
+    # Order by the shift the chunked arm produced, not alphabetically.
+    panels.sort(key=lambda lg: -(lg[1]["score_variant"].mean()
+                                 - lg[1]["score_baseline"].mean()))
+
+    edges = np.arange(0, 101, 10)
+    centres = edges[:-1] + 5
+    width = 4.2
+    ncols = 3
+    nrows = int(np.ceil(len(panels) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(12.4, 3.5 * nrows),
+                             sharex=True, sharey=True)
+    axes = np.atleast_1d(axes).ravel()
+
+    for ax, (label, group) in zip(axes, panels, strict=False):
+        for offset, (arm, column, colour) in enumerate((
+            ("global", "score_baseline", GLOBAL),
+            ("chunked", "score_variant", CHUNK),
+        )):
+            totals = np.histogram(group[column], bins=edges)[0]
+            # 0.4 of surface between the paired bars so they read as two marks.
+            ax.bar(centres + (offset * 2 - 1) * width / 2, totals,
+                   width=width - 0.4, color=colour, zorder=3,
+                   label=arm if ax is axes[0] else None)
+            for centre, count in zip(centres, totals, strict=False):
+                if count >= 4:
+                    ax.annotate(str(int(count)),
+                                (centre + (offset * 2 - 1) * width / 2, count),
+                                xytext=(0, 3), textcoords="offset points",
+                                ha="center", va="bottom", fontsize=7.5, color=MUTED)
+        ax.axvline(threshold, color=MUTED, lw=0.9, ls=(0, (4, 3)), zorder=2)
+        delta = group["score_variant"].mean() - group["score_baseline"].mean()
+        # Snap to zero first, or a delta of -0.02 formats as the nonsense "-0".
+        delta = 0.0 if abs(delta) < 0.5 else delta
+        ax.set_title(f"{_label(label)}   n={len(group)}   mean {delta:+.0f}",
+                     loc="left", fontsize=10, color=INK, fontweight="demibold",
+                     pad=8)
+
+    for ax in axes[len(panels):]:
+        ax.set_visible(False)
+    for ax in axes[: len(panels)]:
+        ax.set_xlim(0, 100)
+        ax.set_xticks([0, 25, 50, 75, 100])
+        ax.set_ylim(0, 55)
+        ax.set_yticks([0, 10, 20, 30, 40, 50])
+        for tick in ax.get_yticks():
+            ax.axhline(tick, color=HAIRLINE, lw=0.8, zorder=0)
+    for ax in axes[len(panels) - ncols: len(panels)]:
+        ax.set_xlabel("monitor score (bins of 10)", fontsize=9, color=MUTED)
+    for ax in axes[::ncols]:
+        ax.set_ylabel("runs", fontsize=9, color=MUTED)
+
+    handles, names = axes[0].get_legend_handles_labels()
+    fig.legend(handles, names, loc="upper right", bbox_to_anchor=(0.995, 0.995),
+               fontsize=9.5, ncol=2, frameon=False)
+    # Headline and subtitle are placed by hand rather than via suptitle's default
+    # y, which sits them on top of each other.
+    fig.suptitle(
+        "Chunking moves the score distribution for four behaviours and not at all "
+        "for two",
+        x=0.008, y=0.995, va="top", ha="left", fontsize=12.5,
+        fontweight="demibold", color=INK,
+    )
+    fig.text(
+        0.008, 0.958,
+        "",
+        ha="left", va="top", fontsize=9, color=MUTED,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    return _save(fig, out / f"score_shift_by_label.{fmt}")
 
 
 def aggregation(out: Path, fmt: str, results: Path) -> Path | None:
@@ -484,7 +579,6 @@ def score_scatter(out: Path, fmt: str, results: Path, threshold: float) -> Path 
         )
 
     recovered = int((paired["transition"] == "recovered").sum())
-    lost = paired[paired["transition"] == "lost"]
     # The recovered cluster fills this corner, so the count needs a plate behind
     # it to stay legible over the points.
     ax.annotate(
@@ -508,23 +602,7 @@ def score_scatter(out: Path, fmt: str, results: Path, threshold: float) -> Path 
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.11), ncol=2,
               fontsize=9.5, handletextpad=0.3, markerscale=1.7, columnspacing=2.2)
 
-    from scipy import stats as _stats
-
-    discordant = recovered + len(lost)
-    pvalue = (_stats.binomtest(recovered, discordant, 0.5).pvalue
-              if discordant else 1.0)
-    shown = "< 0.0001" if pvalue < 0.0001 else f"= {pvalue:.4f}"
-    benign_flagged = int((paired[~paired["is_positive"]]["score_variant"] >= threshold).sum())
-    n_benign = int((~paired["is_positive"]).sum())
-    # Descriptive headline; the finding lives in the subtitle and is derived so
-    # it cannot go stale. Three variables are plotted — both scores and ground
-    # truth as colour — so the headline names the third rather than leaving the
-    # colouring unexplained.
-    crossings = f"{len(lost)} crosses back" if len(lost) == 1 else f"{len(lost)} cross back"
-    _title(
-        ax,
-        "Global vs chunked monitor score"
-    )
+    _title(ax, "Global vs chunked monitor score")
     return _save(fig, out / f"score_scatter.{fmt}")
 
 
@@ -660,17 +738,25 @@ def fpr_by_length(out: Path, fmt: str, results: Path, baseline: Path) -> Path | 
 
 
 def _primary_label(frame: pd.DataFrame) -> pd.Series:
-    """One label per run, chosen deterministically.
+    """One in-scope label per run, chosen deterministically.
 
-    Taking `.str[0]` made the bucket depend on MALT's storage order: the data
-    holds both `gives_up;reasoning_about_task` and `reasoning_about_task;gives_up`,
-    so identical runs landed in different buckets. Sorting makes it stable.
+    Two failure modes this has to avoid, both of which have occurred:
+
+    - Taking `.str[0]` made the bucket depend on MALT's storage order: the data
+      holds both `gives_up;reasoning_about_task` and
+      `reasoning_about_task;gives_up`, so identical runs landed in different
+      buckets. Sorting fixes that.
+    - Sorting alone then surfaced an out-of-family label: the single run labelled
+      `reasoning_about_task;bypass_constraints` sorts to `bypass_constraints`,
+      which is reward hacking, and gave two dataset figures a one-run bucket for
+      a behaviour this monitor was never prompted to detect. Preferring an
+      in-scope label keeps the run in the figure under its sandbagging label.
     """
-    return (
-        frame["labels"].fillna("normal")
-        .apply(lambda s: sorted(x for x in str(s).split(";") if x)[0] if s else "normal")
-        .replace({"normal": "benign"})
-    )
+    def pick(value: object) -> str:
+        scoped = behavior_labels(str(value))
+        return sorted(scoped)[0] if scoped else "benign"
+
+    return frame["labels"].fillna("normal").apply(pick)
 
 
 def length_by_label(out: Path, fmt: str, baseline: Path) -> Path | None:
@@ -874,23 +960,7 @@ def positive_outcomes(out: Path, fmt: str, results: Path) -> Path | None:
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=4,
               fontsize=9, handlelength=1.2, columnspacing=1.6)
 
-    # Bars are per label, but a run carrying two labels appears in two rows, so
-    # summing the columns over-counts. The headline uses run-level counts.
-    paired_path = results / "paired.csv"
-    if paired_path.is_file():
-        paired = pd.read_csv(paired_path)
-        positives = paired[paired["is_positive"]]
-        missed = int((positives["transition"] == "both_missed").sum())
-        total = len(positives)
-    else:
-        missed, total = int(table["both_missed"].sum()), int(table["total"].sum())
-    _title(
-        ax,
-        "Outcome of every positive run, by label",
-        f"{missed} of {total} positives are missed by both monitors — chunking converts\n"
-        f"partial detection into near-complete detection, but the residual is dominated\n"
-        f"by labels neither architecture reaches",
-    )
+    _title(ax, "Outcome of every positive run, by label")
     return _save(fig, out / f"positive_outcomes.{fmt}")
 
 
@@ -1021,7 +1091,7 @@ def recall_by_length(out: Path, fmt: str, results: Path, baseline: Path,
         # Categorical x: only three points per panel, so a log axis bought
         # nothing and its minor ticks collided with the bin counts.
         ticks, counts = [], []
-        for i, (lo, hi) in enumerate(spans):
+        for lo, hi in spans:
             inside = base[(base["tokens"] >= lo) & (base["tokens"] < hi)]
             ticks.append(_fmt(float(inside["tokens"].median())) if len(inside) else "")
             counts.append(len(inside))
@@ -1371,9 +1441,7 @@ def failure_modes_by_label(out: Path, fmt: str, results: Path, baseline: Path,
         lambda f: f[(f["is_positive"]) & (f["score"] < threshold)],
         FAILURE_THEMES, "failure_modes_by_label",
         "Stated rationale on false negatives, by label",
-        "share of that label's missed runs · categories overlap · faded italic rows\n"
-        f"have fewer than {_MIN_FN_FOR_SHARE} misses, where one run moves the figure "
-        "by 14-33 points",
+        "",
         _MIN_FN_FOR_SHARE,
     )
 
@@ -1511,7 +1579,7 @@ def _save(fig: plt.Figure, path: Path) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="default")
+    parser.add_argument("--config", default="fixed")
     parser.add_argument("--out-dir", type=Path, default=None,
                         help="override the figures directory")
     parser.add_argument("--format", default="png", choices=("png", "pdf", "svg"))
@@ -1534,6 +1602,7 @@ def main() -> int:
         # results
         detection_rate(out, args.format, chunk_dir, global_dir, args.threshold),
         score_histogram(out, args.format, chunk_dir, global_dir),
+        score_shift_by_label(out, args.format, chunk_dir, args.threshold),
         recall_by_label(out, args.format, chunk_dir),
         aggregation(out, args.format, chunk_dir),
         score_scatter(out, args.format, chunk_dir, args.threshold),

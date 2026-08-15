@@ -124,7 +124,7 @@ def prune_failed(path: Path, retry_partial: bool = False) -> set[int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="default")
+    parser.add_argument("--config", default="fixed")
     parser.add_argument(
         "--monitor",
         choices=("global", "chunk"),

@@ -137,7 +137,7 @@ def deep_scan(frame: pd.DataFrame, sample: int) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="default")
+    parser.add_argument("--config", default="fixed")
     parser.add_argument("--stage", default="global")
     parser.add_argument("--deep", action="store_true",
                         help="also scan raw transcripts (slow: loads the dataset)")

@@ -64,7 +64,7 @@ def _arm(paired, suffix: str, threshold: float, target_fpr: float) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="default")
+    parser.add_argument("--config", default="fixed")
     parser.add_argument("--baseline", default="global")
     parser.add_argument("--variant", default="chunk")
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
@@ -133,7 +133,7 @@ def main() -> int:
     # i.e. half the false-positive budget. Print where each arm actually sits.
     base_at, var_at = base_report["at_target_fpr"], var_report["at_target_fpr"]
     if base_at.get("achieved_fpr") is not None:
-        print(f"\n  operating points behind the TPR row (they are not the same):")
+        print("\n  operating points behind the TPR row (they are not the same):")
         for name, report in ((args.baseline, base_at), (args.variant, var_at)):
             print(f"    {name:<10} threshold {report['threshold']:>5.0f}   "
                   f"achieved FPR {report['achieved_fpr']:.4f}   "

@@ -46,7 +46,7 @@ def _section(title: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="default")
+    parser.add_argument("--config", default="fixed")
     parser.add_argument("--stage", default="global", help="which stage's results to analyze")
     parser.add_argument("--results", type=Path, default=None, help="explicit results.jsonl path")
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)

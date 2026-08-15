@@ -28,7 +28,7 @@ from monitor_localization.utils import load_env, setup_logging
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="default", help="config name or path")
+    parser.add_argument("--config", default="fixed", help="config name or path")
     parser.add_argument("--n-samples", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--output", type=Path, default=None)
