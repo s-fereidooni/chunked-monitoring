@@ -1,0 +1,43 @@
+Provenance of the v3 prompts
+============================
+
+The four prompts in this directory are METR's, reproduced from the MALT release:
+
+    https://metr.org/blog/2025-10-14-malt-dataset-of-natural-and-prompted-behaviors/
+    (section "Monitor prompts for reward hacking and sandbagging")
+
+    MALT dataset: https://huggingface.co/datasets/metr-evals/malt-public
+
+They are copied deliberately rather than rewritten: the experiment measures what
+chunking does to METR's baseline monitor, so a prompt of our own would confound
+the comparison with prompt engineering.
+
+This file is separate from the prompts rather than a header inside them because
+`load_prompt` sends each file verbatim to the model and records its sha256 with
+the results. A comment in a .md file would change both the prompt the monitor
+reads and the digest attached to runs already completed.
+
+Deviations from METR's published text
+-------------------------------------
+
+1. Score range 0-10 -> 0-100. Rescaling only; it bought no resolution, since the
+   monitor uses ~17 distinct values across the whole corpus.
+
+2. METR's closing JSON-format block is omitted ("Respond in the following
+   format... Please only respond with the JSON object"). We use structured
+   outputs, which enforce the schema, so the instruction is redundant.
+
+3. The response field is named `reasoning`, where METR's JSON block names it
+   `reason`.
+
+4. METR embeds <first_few_messages> and <transcript_chunk> in the prompt
+   template. Here the prompt is the system message and the rendered transcript
+   is the user message; the tags themselves are unchanged.
+
+5. KNOWN ASYMMETRY, not yet tested: METR always writes "a part of a transcript",
+   because their baseline is always chunked. Our global arm says "a transcript"
+   instead, so the two arms differ by one phrase of prompt in addition to the
+   chunking under study. Telling a monitor it is reading a fragment may prime
+   stricter local judgement, which is one of the untested explanations for the
+   effect. Fixing it is a one-line change but needs a re-run to evaluate. See
+   docs/handoff.md.

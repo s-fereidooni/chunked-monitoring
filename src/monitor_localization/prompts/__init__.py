@@ -4,6 +4,11 @@ Prompts live as text files under `prompts/<version>/<name>.md` so they diff
 cleanly in review. Each load carries a sha256 of the exact text, which gets
 recorded alongside results — a prompt edited after a run can then be detected
 rather than quietly invalidating the numbers.
+
+**v3 is METR's text, reproduced from the MALT release.** Attribution and the
+list of deviations live in `v3/SOURCE.txt` rather than in the prompt files
+themselves: the whole file is sent to the model and hashed, so a header would
+change both what the monitor reads and the digest recorded with finished runs.
 """
 
 from __future__ import annotations

@@ -133,7 +133,18 @@ draws", and a one-line prompt asymmetry between the arms — are listed in
 
 ## Acknowledgements
 
-Dataset: [MALT](https://huggingface.co/datasets/metr-evals/malt-public) by METR, MIT
-licensed.
+Both the dataset and the monitor prompts are METR's.
+
+**Dataset:** [MALT](https://huggingface.co/datasets/metr-evals/malt-public) — see the
+dataset page for its terms.
+
+**Prompts:** the four files in `src/monitor_localization/prompts/v3/` are reproduced
+verbatim from METR's
+[MALT release](https://metr.org/blog/2025-10-14-malt-dataset-of-natural-and-prompted-behaviors/),
+deliberately rather than rewritten — the experiment measures what chunking does to METR's
+baseline monitor, so a prompt of our own would confound it with prompt engineering.
+[`prompts/v3/SOURCE.txt`](src/monitor_localization/prompts/v3/SOURCE.txt) records the five
+places our copy deviates, including one known asymmetry between the arms that is not yet
+tested.
 
 Portions of this codebase were written with Claude Opus 5 via Claude Code.
