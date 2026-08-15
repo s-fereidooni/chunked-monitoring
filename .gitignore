@@ -13,6 +13,7 @@ venv/
 .ruff_cache/
 .mypy_cache/
 .ipynb_checkpoints/
+.claude/
 
 # Environment
 .env
@@ -22,6 +23,14 @@ venv/
 # These directories are created at runtime by paths.ensure_dir().
 data/raw/
 data/processed/
+
+# Transcript dumps from `show_run.py` and friends. MALT is gated: METR controls
+# who receives the transcripts, so verbatim run text must never be committed,
+# whatever it happens to be named locally.
+prompted.txt
+*_transcript.txt
+*_transcripts.txt
+transcripts/
 
 # Experiment outputs
 results/
