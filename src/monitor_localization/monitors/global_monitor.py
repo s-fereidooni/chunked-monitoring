@@ -12,9 +12,9 @@ from typing import Any
 
 from monitor_localization.config import ModelConfig
 from monitor_localization.dataset.schema import Transcript
-from monitor_localization.monitors.chunking import render_with_context
 from monitor_localization.llm.client import MonitorClient, MonitorLLMError
 from monitor_localization.monitors.base import Monitor, MonitorResult, Verdict
+from monitor_localization.monitors.chunking import render_with_context
 from monitor_localization.prompts import load_prompt
 from monitor_localization.utils.logging import get_logger
 

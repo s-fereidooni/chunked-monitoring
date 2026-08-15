@@ -6,8 +6,8 @@ from monitor_localization.dataset.loaders import (
     iter_transcripts,
     load_transcripts,
     metadata_table,
-    row_to_transcript,
     redact_prompt_echoes,
+    row_to_transcript,
     strip_system_prompt,
 )
 from monitor_localization.dataset.schema import (

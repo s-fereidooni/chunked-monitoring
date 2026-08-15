@@ -11,13 +11,12 @@ positives only would replace one give-away with another.
 
 from __future__ import annotations
 
-from conftest import make_message, make_row, make_sample
+from conftest import make_message, make_row
 
-from monitor_localization.config import DatasetConfig
 from monitor_localization.dataset import row_to_transcript, strip_system_prompt
 from monitor_localization.dataset.loaders import REDACTION
 from monitor_localization.dataset.schema import Message, Transcript
-from monitor_localization.monitors import ChunkMonitor, split_transcript
+from monitor_localization.monitors import split_transcript
 from monitor_localization.monitors.global_monitor import render_for_monitor
 
 DIRECTIVE = (
