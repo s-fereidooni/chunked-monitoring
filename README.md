@@ -15,9 +15,7 @@ arms.
 
 📝 **Blog post:** _(link to follow)_
 
-Figures are in [`results/sandbagging-fixed/figures/`](results/sandbagging-fixed/figures);
-[`docs/experiments.md`](docs/experiments.md) is the full run log, including claims that
-were retracted when better inputs contradicted them.
+Figures are in [`results/sandbagging-fixed/figures/`](results/sandbagging-fixed/figures).
 
 ## Setup
 
@@ -46,20 +44,6 @@ uv run python scripts/analyze.py --stage chunk
 uv run python scripts/compare.py                        # paired McNemar + length controls
 uv run python scripts/figures.py                        # 18 figures
 ```
-
-Worth running before believing any results directory:
-
-```bash
-uv run python scripts/audit_pipeline.py   # 22 checks of output against the raw parquet
-uv run python scripts/audit_leakage.py    # features that predict the label by themselves
-uv run python scripts/show_run.py 329102  # one transcript + both arms' verdicts
-```
-
-Ten bugs reached results or tooling undetected during this work and **none was caught by
-the test suite or by the metrics** — test fixtures encode the author's model of the data,
-so when that model is wrong the fixture is wrong the same way. `audit_pipeline.py` exists
-for that reason, and compares output against the source parquet rather than against
-expectations.
 
 ## Credits
 

@@ -36,6 +36,7 @@ transcripts/
 # plan and the adversarial review brief written for a reviewer.
 notes.md
 docs/handoff.md
+docs/experiments.md
 
 # Experiment outputs. The figures for the current run are tracked so the repo
 # carries the result without a reader needing dataset access and an API key; the
