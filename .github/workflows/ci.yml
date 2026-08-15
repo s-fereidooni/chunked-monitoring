@@ -2,8 +2,7 @@ name: ci
 
 # Lint and unit tests only. The pipeline audit (`scripts/audit_pipeline.py`) is
 # deliberately not run here: it needs the gated MALT dataset and a token, and
-# would fail on every fork. Run it locally before trusting a results directory —
-# see docs/handoff.md for why the test suite alone is not enough.
+# would fail on every fork. Run it locally before trusting a results directory.
 
 on:
   push:

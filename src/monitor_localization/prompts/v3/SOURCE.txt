@@ -39,5 +39,4 @@ Deviations from METR's published text
    instead, so the two arms differ by one phrase of prompt in addition to the
    chunking under study. Telling a monitor it is reading a fragment may prime
    stricter local judgement, which is one of the untested explanations for the
-   effect. Fixing it is a one-line change but needs a re-run to evaluate. See
-   docs/handoff.md.
+   effect. Fixing it is a one-line change but needs a re-run to evaluate.

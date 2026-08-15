@@ -37,15 +37,25 @@ arms. See [`docs/experiments.md`](docs/experiments.md) for the full log, includi
 
 ## Read this before trusting any of it
 
-[`docs/handoff.md`](docs/handoff.md) is written for a reviewer whose job is to find
-problems. It leads with a table of **ten bugs that reached results or tooling undetected**,
-and the fact that **not one was caught by the test suite or by the metrics** — five were
-found by reading raw data, five by independent review of a codebase whose own audit was
-reporting green.
+Ten bugs reached results or tooling undetected over the course of this work, and **not one
+was caught by the test suite or by the metrics.** Five were found by reading raw data, five
+by independent review — the last of them in a codebase whose own audit was reporting green.
+Among them: 32% of the corpus silently duplicated, a config flag that never reached the
+loader so a "successful" pass made zero API calls, and a length statistic that omitted tool
+arguments and so biased the length control along the axis it existed to control for.
 
-`scripts/audit_pipeline.py` exists because of that: it compares pipeline output against the
-source parquet rather than against fixtures, since a fixture encodes the same wrong model of
-the data that the code does.
+The cause is structural. Test fixtures encode the *author's* model of the data, so when
+that model is wrong the fixture is wrong the same way and the test agrees with the bug.
+Metrics cannot help either: a monitor scoring a corrupted transcript still returns a
+plausible number.
+
+`scripts/audit_pipeline.py` exists because of that — it compares pipeline output against
+the source parquet rather than against expectations. Note that its own first version was
+blind to the bug it was written for, comparing sets where multiplicity was the thing that
+mattered. Treat it as code to review, not as an oracle.
+
+[`docs/experiments.md`](docs/experiments.md) logs every run in order, including the claims
+that were **retracted** when better inputs contradicted them.
 
 ## Setup
 
@@ -105,11 +115,9 @@ reproducible from the tracked subset plus the configs.
 ## Layout
 
 ```
-notes.md                      research plan
 configs/                      experiment configs — fixed.yaml is current
 data/evaluation_subset.json   tracked: the 554 run IDs and how they were chosen
 docs/experiments.md           experiment log, newest last, with retractions
-docs/handoff.md               adversarial review brief + bug history
 results/sandbagging-fixed/figures/   tracked: 18 figures for the current run
 src/monitor_localization/
   dataset/                    parquet -> linear transcript, schema, subset construction
@@ -118,7 +126,7 @@ src/monitor_localization/
   evaluation/                 metrics, paired comparison, length controls
   llm/                        client + content-addressed response cache
 scripts/                      entry points, one per pipeline stage
-tests/                        197 tests
+tests/                        178 tests
 ```
 
 ## Deliberately out of scope
@@ -127,9 +135,12 @@ Localization annotations, hierarchical/hybrid/adaptive monitoring, synthetic ben
 multiple monitor models, multiple datasets. The codebase is structured so these drop in
 without rework.
 
-Known open questions — shuffled-chunk control to separate "shorter context" from "more
-draws", and a one-line prompt asymmetry between the arms — are listed in
-[`docs/handoff.md`](docs/handoff.md).
+Two open questions are worth naming. A **shuffled-chunk control** (same length, same chunk
+count, order destroyed) has never been run, and it is the only thing that would separate
+"shorter context helps" from "more draws help". And METR's prompt always says "a part of a
+transcript" because their baseline is always chunked, so our global arm's "a transcript" is
+one phrase of prompt difference on top of the chunking — see
+[`prompts/v3/SOURCE.txt`](src/monitor_localization/prompts/v3/SOURCE.txt).
 
 ## Acknowledgements
 

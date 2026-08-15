@@ -7,7 +7,7 @@
 # `sandbagging-global` (elicitation prompt included) and `sandbagging-stripped`
 # (prompt removed, buggy pipeline) are preserved for comparison.
 #
-# What changed since `stripped.yaml` produced its results — see docs/handoff.md
+# What changed since `stripped.yaml` produced its results
 # for the full bug table:
 #
 #   - Message reconstruction emitted every assistant message twice (~32% of the
