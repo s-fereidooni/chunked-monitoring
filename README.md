@@ -1,4 +1,4 @@
-# Chunk-wise monitoring
+# Chunked monitoring
 
 Monitoring long agent transcripts **in chunks**, rather than all at once, catches
 sandbagging that whole-transcript monitoring misses.
@@ -13,7 +13,7 @@ recovers 92% of `partial_problem_solving`, 88% of `match_weaker_model` and 45% o
 `refusals`, while `reasoning_about_task` and `gives_up` stay at zero recall in **both**
 arms.
 
-📝 **Blog post:** _(link to follow)_
+📝 **LessWrong post:** [Using Chunked Monitoring to Detect Deception in Long Transcripts](https://www.lesswrong.com/posts/orMEvTgtRig9qnsdL/using-chunked-monitoring-to-detect-deception-in-long)
 
 Figures are in [`results/sandbagging-fixed/figures/`](results/sandbagging-fixed/figures).
 
