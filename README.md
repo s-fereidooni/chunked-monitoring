@@ -86,7 +86,7 @@ uv run python scripts/run_monitor.py --monitor chunk       # -> results/<exp>/ch
 uv run python scripts/analyze.py --stage global            # metrics, per-sample, failures
 uv run python scripts/analyze.py --stage chunk
 uv run python scripts/compare.py                           # paired McNemar + length controls
-uv run python scripts/figures.py                           # 17 figures
+uv run python scripts/figures.py                           # 18 figures
 ```
 
 Checks, both worth running before believing a results directory:
@@ -97,8 +97,10 @@ uv run python scripts/audit_leakage.py     # features that predict the label by 
 uv run python scripts/show_run.py 329102   # one transcript + both arms' verdicts
 ```
 
-`results/` is gitignored — the numbers above are reproducible from the tracked subset plus
-the configs.
+`results/sandbagging-fixed/figures/` is tracked, so the figures are readable without
+dataset access or an API key. The CSVs and `results.jsonl` are not: they quote monitor
+reasoning derived from gated MALT transcripts. Everything else under `results/` is
+reproducible from the tracked subset plus the configs.
 
 ## Layout
 
@@ -108,6 +110,7 @@ configs/                      experiment configs — fixed.yaml is current
 data/evaluation_subset.json   tracked: the 554 run IDs and how they were chosen
 docs/experiments.md           experiment log, newest last, with retractions
 docs/handoff.md               adversarial review brief + bug history
+results/sandbagging-fixed/figures/   tracked: 18 figures for the current run
 src/monitor_localization/
   dataset/                    parquet -> linear transcript, schema, subset construction
   monitors/                   global + chunk monitors, chunking, aggregation

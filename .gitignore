@@ -32,8 +32,16 @@ prompted.txt
 *_transcripts.txt
 transcripts/
 
-# Experiment outputs
-results/
+# Experiment outputs. The figures for the current run are tracked so the repo
+# carries the result without a reader needing dataset access and an API key; the
+# CSVs and results.jsonl are not, because they quote monitor reasoning derived
+# from gated MALT transcripts. Re-run scripts/figures.py to regenerate.
+# Un-ignoring a path requires un-ignoring each parent directory first — git
+# never descends into an excluded directory to find negations inside it.
+results/*
+!results/sandbagging-fixed/
+results/sandbagging-fixed/*
+!results/sandbagging-fixed/figures/
 
 # LLM response cache
 .cache/
