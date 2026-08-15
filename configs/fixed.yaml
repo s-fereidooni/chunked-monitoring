@@ -40,7 +40,7 @@ description: >
   fixed. First run with inputs believed correct.
 
 monitor_target: sandbagging
-prompt_version: v3
+prompt_version: metr
 output_dir: results
 
 dataset:

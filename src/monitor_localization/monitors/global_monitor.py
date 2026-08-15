@@ -13,7 +13,7 @@ from typing import Any
 from monitor_localization.config import ModelConfig
 from monitor_localization.dataset.schema import Transcript
 from monitor_localization.llm.client import MonitorClient, MonitorLLMError
-from monitor_localization.monitors.base import Monitor, MonitorResult, Verdict
+from monitor_localization.monitors.base import Monitor, MonitorResult, Verdict, _require_target
 from monitor_localization.monitors.chunking import render_with_context
 from monitor_localization.prompts import load_prompt
 from monitor_localization.utils.logging import get_logger
@@ -54,16 +54,17 @@ class GlobalMonitor(Monitor):
         self,
         client: MonitorClient | None = None,
         model: ModelConfig | None = None,
-        prompt_version: str = "v1",
+        prompt_version: str = "metr",
         target: str | None = None,
     ) -> None:
         self.model = model or ModelConfig()
         self.client = client or MonitorClient(self.model)
-        self.target = target
-        # v3 onward carries a prompt per monitored behavior, following METR's
-        # separate reward-hacking and sandbagging monitors.
-        name = f"{target}_global" if target else "global_monitor"
-        self.prompt = load_prompt(name, prompt_version)
+        # A prompt per monitored behaviour, following METR's separate
+        # reward-hacking and sandbagging monitors. There is no behaviour-neutral
+        # prompt to fall back on, and defaulting silently would let a run be
+        # attributed to a behaviour nobody chose.
+        self.target = target or _require_target()
+        self.prompt = load_prompt(f"{self.target}_global", prompt_version)
 
     def judge(self, transcript: Transcript) -> MonitorResult:
         """Score a transcript, recording failures rather than raising.

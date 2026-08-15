@@ -119,3 +119,16 @@ class Monitor(abc.ABC):
     def describe(self) -> dict[str, Any]:
         """Configuration provenance, recorded with the experiment."""
         return {"monitor": self.name}
+
+
+def _require_target() -> str:
+    """Fail loudly when a monitor is built without a behaviour to monitor.
+
+    Prompts are per behaviour, so there is nothing generic to fall back on.
+    Raising beats defaulting: a silent default would attach results to a
+    behaviour nobody selected, and the score would still look plausible.
+    """
+    raise ValueError(
+        "A monitor needs target='sandbagging' or target='reward_hacking' — "
+        "prompts are per behaviour and there is no neutral fallback."
+    )

@@ -122,7 +122,7 @@ results/sandbagging-fixed/figures/   tracked: 18 figures for the current run
 src/monitor_localization/
   dataset/                    parquet -> linear transcript, schema, subset construction
   monitors/                   global + chunk monitors, chunking, aggregation
-  prompts/                    versioned monitor prompts (v3 = METR's, rescaled 0-100)
+  prompts/metr/               METR's monitor prompts, verbatim + SOURCE.txt
   evaluation/                 metrics, paired comparison, length controls
   llm/                        client + content-addressed response cache
 scripts/                      entry points, one per pipeline stage
@@ -140,7 +140,7 @@ count, order destroyed) has never been run, and it is the only thing that would 
 "shorter context helps" from "more draws help". And METR's prompt always says "a part of a
 transcript" because their baseline is always chunked, so our global arm's "a transcript" is
 one phrase of prompt difference on top of the chunking — see
-[`prompts/v3/SOURCE.txt`](src/monitor_localization/prompts/v3/SOURCE.txt).
+[`prompts/metr/SOURCE.txt`](src/monitor_localization/prompts/metr/SOURCE.txt).
 
 ## Acknowledgements
 
@@ -149,12 +149,12 @@ Both the dataset and the monitor prompts are METR's.
 **Dataset:** [MALT](https://huggingface.co/datasets/metr-evals/malt-public) — see the
 dataset page for its terms.
 
-**Prompts:** the four files in `src/monitor_localization/prompts/v3/` are reproduced
+**Prompts:** the four files in `src/monitor_localization/prompts/metr/` are reproduced
 verbatim from METR's
 [MALT release](https://metr.org/blog/2025-10-14-malt-dataset-of-natural-and-prompted-behaviors/),
 deliberately rather than rewritten — the experiment measures what chunking does to METR's
 baseline monitor, so a prompt of our own would confound it with prompt engineering.
-[`prompts/v3/SOURCE.txt`](src/monitor_localization/prompts/v3/SOURCE.txt) records the five
+[`prompts/metr/SOURCE.txt`](src/monitor_localization/prompts/metr/SOURCE.txt) records the five
 places our copy deviates, including one known asymmetry between the arms that is not yet
 tested.
 

@@ -19,6 +19,7 @@ from monitor_localization.monitors.base import (
     Monitor,
     MonitorResult,
     Verdict,
+    _require_target,
 )
 from monitor_localization.monitors.chunking import split_transcript
 from monitor_localization.prompts import load_prompt
@@ -38,16 +39,15 @@ class ChunkMonitor(Monitor):
         model: ModelConfig | None = None,
         chunk: ChunkConfig | None = None,
         aggregation: AggregationConfig | None = None,
-        prompt_version: str = "v1",
+        prompt_version: str = "metr",
         target: str | None = None,
     ) -> None:
         self.model = model or ModelConfig()
         self.chunk_cfg = chunk or ChunkConfig()
         self.aggregation_cfg = aggregation or AggregationConfig()
         self.client = client or MonitorClient(self.model)
-        self.target = target
-        name = f"{target}_chunk" if target else "chunk_monitor"
-        self.prompt = load_prompt(name, prompt_version)
+        self.target = target or _require_target()
+        self.prompt = load_prompt(f"{self.target}_chunk", prompt_version)
 
     def judge(self, transcript: Transcript) -> MonitorResult:
         """Score every chunk, then aggregate.

@@ -1,5 +1,5 @@
-Provenance of the v3 prompts
-============================
+Provenance of the METR prompts
+==============================
 
 The four prompts in this directory are METR's, reproduced from the MALT release:
 
@@ -16,6 +16,16 @@ This file is separate from the prompts rather than a header inside them because
 `load_prompt` sends each file verbatim to the model and records its sha256 with
 the results. A comment in a .md file would change both the prompt the monitor
 reads and the digest attached to runs already completed.
+
+A note on the directory name
+----------------------------
+
+This set was called `v3` until 2026-08-14, alongside two earlier sets of our own
+that have since been deleted as superseded. Only the directory name changed --
+the prompt text is byte-identical, and the sha256 recorded with every completed
+run still matches. Results produced before the rename therefore carry
+`"version": "v3"` in their run.json while the directory reads `metr`. The digest,
+not the name, is what pins the text.
 
 Deviations from METR's published text
 -------------------------------------

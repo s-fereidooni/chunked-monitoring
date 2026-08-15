@@ -219,7 +219,8 @@ def test_evidence_index_is_none_for_mean():
 
 def test_chunk_monitor_scores_every_chunk_and_aggregates(tmp_path):
     client, completions = make_client(tmp_path)
-    monitor = ChunkMonitor(client=client, chunk=ChunkConfig(size=10, context_messages=5))
+    monitor = ChunkMonitor(client=client, target="sandbagging",
+                           chunk=ChunkConfig(size=10, context_messages=5))
     result = monitor.judge(transcript(30, run_id=4))
 
     assert result.metadata["n_chunks"] == 3
@@ -231,7 +232,7 @@ def test_chunk_monitor_scores_every_chunk_and_aggregates(tmp_path):
 
 def test_chunk_monitor_retains_per_chunk_verdicts_for_reaggregation(tmp_path):
     client, _ = make_client(tmp_path)
-    result = ChunkMonitor(client=client).judge(transcript(30))
+    result = ChunkMonitor(client=client, target="sandbagging").judge(transcript(30))
     # Offline re-aggregation must be possible without re-running inference.
     scores = [v.score for v in result.chunk_verdicts]
     assert aggregate(scores, AggregationConfig(method="mean")) == 7.0
@@ -240,14 +241,14 @@ def test_chunk_monitor_retains_per_chunk_verdicts_for_reaggregation(tmp_path):
 
 def test_chunk_monitor_reasoning_points_at_the_driving_chunk(tmp_path):
     client, _ = make_client(tmp_path)
-    result = ChunkMonitor(client=client).judge(transcript(30))
+    result = ChunkMonitor(client=client, target="sandbagging").judge(transcript(30))
     assert result.reasoning.startswith("[chunk ")
     assert "messages" in result.reasoning
 
 
 def test_chunk_monitor_survives_a_failing_chunk(tmp_path):
     client, _ = make_client(tmp_path, finish_reason="length")
-    result = ChunkMonitor(client=client).judge(transcript(20))
+    result = ChunkMonitor(client=client, target="sandbagging").judge(transcript(20))
     # Every chunk failed here, so the transcript is an error...
     assert result.failed
     assert "AllChunksFailed" in result.error
@@ -257,14 +258,14 @@ def test_chunk_monitor_survives_a_failing_chunk(tmp_path):
 
 def test_chunk_monitor_handles_empty_transcript(tmp_path):
     client, _ = make_client(tmp_path)
-    result = ChunkMonitor(client=client).judge(transcript(0))
+    result = ChunkMonitor(client=client, target="sandbagging").judge(transcript(0))
     assert result.failed
     assert "EmptyTranscript" in result.error
 
 
 def test_chunk_monitor_sends_the_chunk_prompt_not_the_global_one(tmp_path):
     client, completions = make_client(tmp_path)
-    ChunkMonitor(client=client, prompt_version="v3", target="sandbagging").judge(transcript(12))
+    ChunkMonitor(client=client, prompt_version="metr", target="sandbagging").judge(transcript(12))
     system = completions.calls[0]["messages"][0]["content"].lower()
     assert "a part of a transcript" in system
 
@@ -273,6 +274,7 @@ def test_describe_records_chunk_and_aggregation_config(tmp_path):
     client, _ = make_client(tmp_path)
     described = ChunkMonitor(
         client=client,
+        target="sandbagging",
         chunk=ChunkConfig(size=7, overlap=2),
         aggregation=AggregationConfig(method="mean"),
     ).describe()
@@ -285,7 +287,8 @@ def test_chunk_monitor_reuses_cache_across_identical_chunks(tmp_path):
     # Overlapping windows re-send shared messages; identical rendered chunks must
     # hit the cache rather than paying twice.
     client, completions = make_client(tmp_path)
-    monitor = ChunkMonitor(client=client, chunk=ChunkConfig(size=10, context_messages=0))
+    monitor = ChunkMonitor(client=client, target="sandbagging",
+                           chunk=ChunkConfig(size=10, context_messages=0))
     monitor.judge(transcript(30, run_id=1))
     calls_after_first = len(completions.calls)
     monitor.judge(transcript(30, run_id=2))  # same content, different run_id
@@ -296,7 +299,8 @@ def test_row_to_transcript_integration(tmp_path):
     from monitor_localization.dataset import row_to_transcript
 
     client, _ = make_client(tmp_path)
-    result = ChunkMonitor(client=client).judge(row_to_transcript(make_row(run_id=99)))
+    monitor = ChunkMonitor(client=client, target="sandbagging")
+    result = monitor.judge(row_to_transcript(make_row(run_id=99)))
     assert result.run_id == 99
     assert result.metadata["n_chunks"] >= 1
 

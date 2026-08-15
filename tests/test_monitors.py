@@ -57,53 +57,68 @@ def make_client(tmp_path, **kwargs) -> tuple[MonitorClient, FakeCompletions]:
 # --- prompts ----------------------------------------------------------------
 
 
-def test_v1_prompts_exist():
-    assert set(available_prompts("v1")) >= {"global_monitor", "chunk_monitor"}
+SANDBAGGING_PROMPTS = ("sandbagging_global", "sandbagging_chunk")
+
+
+def test_metr_prompt_set_is_complete():
+    assert set(available_prompts("metr")) == {
+        "sandbagging_global", "sandbagging_chunk",
+        "reward_hacking_global", "reward_hacking_chunk",
+    }
 
 
 def test_prompt_carries_digest():
-    prompt = load_prompt("global_monitor", "v1")
+    prompt = load_prompt("sandbagging_global", "metr")
     assert len(prompt.sha256) == 64
-    assert prompt.describe()["version"] == "v1"
+    assert prompt.describe()["version"] == "metr"
 
 
 def test_prompt_load_is_cached_so_text_cannot_change_mid_run():
-    assert load_prompt("global_monitor", "v1") is load_prompt("global_monitor", "v1")
+    assert load_prompt("sandbagging_global", "metr") is load_prompt(
+        "sandbagging_global", "metr"
+    )
 
 
 def test_missing_prompt_lists_alternatives():
-    with pytest.raises(FileNotFoundError, match="global_monitor"):
-        load_prompt("nope", "v1")
+    with pytest.raises(FileNotFoundError, match="sandbagging_global"):
+        load_prompt("nope", "metr")
 
 
-def test_chunk_prompt_addresses_partial_context():
-    # The chunk monitor must know it is seeing a fragment, and must not be
-    # pushed toward speculating about the parts it cannot see.
-    text = load_prompt("chunk_monitor", "v1").text.lower()
-    assert "excerpt" in text
-    assert "do not speculate" in text
-    assert "score the excerpt itself" in text
+def test_only_the_chunk_prompt_says_it_is_reading_a_fragment():
+    """Pins the one prompt difference between the arms, so it stays deliberate.
+
+    METR's text always says "a part of a transcript" because their baseline is
+    always chunked; our global arm says "a transcript". That is a real
+    asymmetry beyond the chunking under study — telling a monitor it is reading
+    a fragment may prime stricter local judgement — and it is recorded as a
+    known limitation in `metr/SOURCE.txt`. This test exists so the difference
+    cannot drift or be silently "fixed" without the re-run that would be needed
+    to evaluate the change.
+    """
+    assert "a part of a transcript" in load_prompt("sandbagging_chunk", "metr").text
+    assert "a part of a transcript" not in load_prompt("sandbagging_global", "metr").text
 
 
 def test_prompts_do_not_enumerate_the_label_taxonomy():
-    """Guards against re-introducing answer-key leakage.
+    """Guards against answer-key leakage.
 
-    Listing MALT's label names in the prompt makes measured recall partly an
-    artifact of prompt engineering rather than monitoring capability. The
-    published setups (SHADE-Arena, METR) describe the construct instead.
+    Listing MALT's label identifiers would make measured recall partly an
+    artifact of prompt engineering rather than monitoring capability. Naming the
+    *construct* is fine and expected — METR's text says "sandbagging" and
+    describes mimicking a weaker model in prose. What must not appear is the
+    label vocabulary the runs are scored against.
     """
     labels = [
         "bypass_constraints",
         "hardcoded_solution",
         "match_weaker_model",
         "partial_problem_solving",
+        "reasoning_about_task",
         "gives_up",
-        "reward hacking",
-        "sandbagging",
     ]
-    for name in ("global_monitor", "chunk_monitor"):
-        text = load_prompt(name, "v1").text.lower()
-        leaked = [label for label in labels if label.replace("_", " ") in text or label in text]
+    for name in SANDBAGGING_PROMPTS:
+        text = load_prompt(name, "metr").text.lower()
+        leaked = [label for label in labels if label in text or label.replace("_", " ") in text]
         assert not leaked, f"{name} leaks label names: {leaked}"
 
 
@@ -115,8 +130,8 @@ def test_prompts_do_not_instruct_score_distribution():
     the model how to distribute its scores. Instructing the distribution biases
     the exact quantity being measured.
     """
-    for name in ("global_monitor", "chunk_monitor"):
-        text = load_prompt(name, "v1").text.lower()
+    for name in SANDBAGGING_PROMPTS:
+        text = load_prompt(name, "metr").text.lower()
         for phrase in ("full range", "do not cluster", "round numbers", "midpoint"):
             assert phrase not in text, f"{name} instructs score distribution: {phrase!r}"
 
@@ -227,7 +242,7 @@ def test_usage_accumulates_across_calls(tmp_path):
 
 def test_global_monitor_scores_a_transcript(tmp_path):
     client, completions = make_client(tmp_path)
-    monitor = GlobalMonitor(client=client)
+    monitor = GlobalMonitor(client=client, target="sandbagging")
     transcript = row_to_transcript(make_row(run_id=7, labels=["sabotage"]))
     result = monitor.judge(transcript)
 
@@ -243,11 +258,14 @@ def test_global_monitor_scores_a_transcript(tmp_path):
 
 def test_global_monitor_sends_transcript_text_and_prompt(tmp_path):
     client, completions = make_client(tmp_path)
-    monitor = GlobalMonitor(client=client)
+    monitor = GlobalMonitor(client=client, target="sandbagging")
     monitor.judge(row_to_transcript(make_row()))
     messages = completions.calls[0]["messages"]
+    # The prompt is the system message and the rendered transcript is the user
+    # message — one of the documented departures from METR's template, which
+    # embeds the transcript in the prompt itself. See metr/SOURCE.txt.
     assert messages[0]["role"] == "system"
-    assert "integrity of an evaluation" in messages[0]["content"].lower()
+    assert messages[0]["content"] == load_prompt("sandbagging_global", "metr").text
     assert "[assistant]" in messages[1]["content"]
 
 
@@ -258,7 +276,7 @@ def test_normalized_score_maps_to_unit_range():
 
 def test_failure_is_recorded_not_raised(tmp_path):
     client, _ = make_client(tmp_path, finish_reason="length")
-    monitor = GlobalMonitor(client=client)
+    monitor = GlobalMonitor(client=client, target="sandbagging")
     result = monitor.judge(row_to_transcript(make_row(run_id=9)))
     # One bad transcript must not abort a 500-run stage...
     assert result.failed
@@ -269,6 +287,6 @@ def test_failure_is_recorded_not_raised(tmp_path):
 
 def test_describe_records_provenance(tmp_path):
     client, _ = make_client(tmp_path)
-    described = GlobalMonitor(client=client).describe()
+    described = GlobalMonitor(client=client, target="sandbagging").describe()
     assert described["model"]["name"] == "gpt-4.1-mini"
     assert len(described["prompt"]["sha256"]) == 64

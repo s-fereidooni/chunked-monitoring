@@ -37,7 +37,7 @@ description: >
   presence of an injected instruction.
 
 monitor_target: sandbagging
-prompt_version: v3
+prompt_version: metr
 output_dir: results
 
 dataset:

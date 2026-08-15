@@ -183,7 +183,7 @@ class ExperimentConfig(StrictModel):
     # monitor per target rather than one combined monitor, and reports that a
     # less specific prompt measurably degrades performance.
     monitor_target: Literal["sandbagging", "reward_hacking"] = "sandbagging"
-    prompt_version: str = "v1"
+    prompt_version: str = "metr"
     output_dir: Path = RESULTS_DIR
     dataset: DatasetConfig = Field(default_factory=DatasetConfig)
     subset: SubsetConfig = Field(default_factory=SubsetConfig)

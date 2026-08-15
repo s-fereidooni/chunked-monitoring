@@ -8,7 +8,7 @@ from monitor_localization.paths import CONFIGS_DIR
 def test_default_yaml_loads():
     cfg = ExperimentConfig.from_yaml("default")
     assert cfg.monitor_target == "sandbagging"
-    assert cfg.prompt_version == "v3"
+    assert cfg.prompt_version == "metr"
     assert cfg.chunk.overlap == 0
     assert cfg.aggregation.method == "max"
 

@@ -1,14 +1,21 @@
-"""Versioned monitor prompts.
+"""Monitor prompts, grouped into named sets.
 
-Prompts live as text files under `prompts/<version>/<name>.md` so they diff
-cleanly in review. Each load carries a sha256 of the exact text, which gets
-recorded alongside results — a prompt edited after a run can then be detected
-rather than quietly invalidating the numbers.
+Prompts live as text files under `prompts/<set>/<name>.md` so they diff cleanly
+in review. Each load carries a sha256 of the exact text, which gets recorded
+alongside results — a prompt edited after a run can then be detected rather than
+quietly invalidating the numbers.
 
-**v3 is METR's text, reproduced from the MALT release.** Attribution and the
-list of deviations live in `v3/SOURCE.txt` rather than in the prompt files
-themselves: the whole file is sent to the model and hashed, so a header would
-change both what the monitor reads and the digest recorded with finished runs.
+One set ships: **`metr`**, reproduced from the MALT release. Every experiment
+here uses it, because the question is what chunking does to METR's baseline
+monitor and a prompt of our own would confound that with prompt engineering.
+Attribution and the list of deviations live in `metr/SOURCE.txt` rather than in
+the prompt files themselves: the whole file is sent to the model and hashed, so
+a header would change both what the monitor reads and the digest recorded with
+finished runs.
+
+The set is still a parameter rather than hardcoded, so a prompt ablation can be
+added as a sibling directory without touching the loader — but note that a new
+set is a *different experiment*, not a revision of this one.
 """
 
 from __future__ import annotations
@@ -55,7 +62,7 @@ def available_prompts(version: str) -> list[str]:
 
 
 @cache
-def load_prompt(name: str, version: str = "v1") -> Prompt:
+def load_prompt(name: str, version: str = "metr") -> Prompt:
     """Load `prompts/<version>/<name>.md`.
 
     Cached, so repeated loads during a run cannot pick up a mid-run edit and
