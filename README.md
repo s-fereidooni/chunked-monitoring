@@ -1,81 +1,136 @@
-# Monitor Localization
+# Chunk-wise monitoring
 
-Research prototype investigating whether **localized (chunk-wise) monitoring** can recover
-blind spots of **global LLM monitors**.
+Does monitoring an agent transcript in **chunks** detect sandbagging better than monitoring
+the **whole transcript** at once — and if so, why?
 
-> Which monitor blind spots can chunk-wise monitoring recover?
+METR's MALT baseline already chunks ("the transcript is chunked, with the first five
+messages repeated across all chunks for context about the task") but publishes no ablation.
+SHADE-Arena, Redwood's control work and most of the surrounding literature monitor whole
+transcripts. Nobody has published what chunking buys, on which behaviours, or under which
+aggregation rule.
 
-The goal is not a production monitoring system but a clean experimental framework for
-comparing monitoring architectures. First milestone: a LessWrong post.
+This is a research prototype, not a production monitoring system. The deliverable is a
+LessWrong post; scope was kept deliberately small.
 
-See [`notes.md`](notes.md) for the full research plan and
-[`docs/experiments.md`](docs/experiments.md) for the experiment log.
+## Result
+
+554 MALT runs — 261 sandbagging across six behaviour labels, 293 benign — each scored twice
+by `gpt-4.1-mini`, once whole and once in 20-message chunks aggregated by max.
+
+| | global | chunk |
+|---|---|---|
+| ROC AUC | 0.761 | **0.821** |
+| recall @ score ≥ 50 | 0.303 | **0.621** |
+| FPR @ score ≥ 50 | 0.007 | 0.007 |
+| runs caught at ≤5% FPR | 0.556 | **0.651** |
+
+McNemar's exact test on the discordant pairs: **84 recovered, 1 lost**, p < 0.0001.
+
+ROC AUC is the number to quote. "TPR at 5% FPR" is *not* a matched comparison here — the
+score grid is coarse enough that the arms land at 4.8% and 1.4% actual FPR, so chunking is
+held to under a third of the budget global gets.
+
+The gain is concentrated: `partial_problem_solving` 0.149 → 0.936 and `match_weaker_model`
+0.306 → 0.898, while `reasoning_about_task` and `gives_up` stay at exactly 0.000 in both
+arms. See [`docs/experiments.md`](docs/experiments.md) for the full log, including what does
+*not* replicate and which mechanism questions remain open.
+
+## Read this before trusting any of it
+
+[`docs/handoff.md`](docs/handoff.md) is written for a reviewer whose job is to find
+problems. It leads with a table of **ten bugs that reached results or tooling undetected**,
+and the fact that **not one was caught by the test suite or by the metrics** — five were
+found by reading raw data, five by independent review of a codebase whose own audit was
+reporting green.
+
+`scripts/audit_pipeline.py` exists because of that: it compares pipeline output against the
+source parquet rather than against fixtures, since a fixture encodes the same wrong model of
+the data that the code does.
 
 ## Setup
 
 ```bash
-uv venv --python 3.13
-uv pip install -e ".[analysis,dev]"
+uv sync --all-extras
 cp .env.example .env    # then fill in
 ```
 
-The baseline monitor is OpenAI's `gpt-4.1-mini`, configured for deterministic,
-short structured verdicts. Set `OPENAI_API_KEY` in `.env` before running monitor
-stages.
+`OPENAI_API_KEY` is needed for the monitor. Responses are content-addressed and cached under
+`.cache/responses`, so re-running a scored subset costs nothing.
 
 ### Dataset access
 
-The dataset is [MALT](https://metr.org/blog/2025-10-14-malt-dataset-of-natural-and-prompted-behaviors/)
-(Manually-reviewed Agentic Labeled Transcripts) from METR — 10,919 agent transcripts labeled
-with behaviors that threaten evaluation integrity. We use the public variant,
-[`metr-evals/malt-public`](https://huggingface.co/datasets/metr-evals/malt-public):
-7,179 runs over 30 task families and 169 tasks.
+[MALT](https://metr.org/blog/2025-10-14-malt-dataset-of-natural-and-prompted-behaviors/)
+(Manually-reviewed Agentic Labeled Transcripts) by METR — we use the public variant,
+[`metr-evals/malt-public`](https://huggingface.co/datasets/metr-evals/malt-public): 7,179
+runs over 30 task families.
 
-It is **gated**. Two steps are required:
+It is **gated**. Two steps:
 
 1. Accept the terms on the dataset page while signed in to Hugging Face.
-2. Provide a token, either via `HF_TOKEN` in `.env` or `huggingface-cli login`.
+2. Supply a token via `HF_TOKEN` in `.env`, or `huggingface-cli login`.
 
-The full split is ~3.6 GB compressed / ~18.6 GB on disk.
+~3.6 GB compressed / ~18.6 GB on disk. Transcripts are never committed here — `data/evaluation_subset.json`
+holds the 554 run IDs and the config that selected them, which makes the subset reproducible
+without redistributing gated data.
+
+## Reproducing
+
+Every script takes `--config`. **`fixed` is the current one** and is the default;
+`stripped` and `default` are earlier runs kept only for comparison and are stale — `default`
+still feeds MALT's elicitation prompt to the monitor, which inflates its numbers.
+
+```bash
+uv run python scripts/build_subset.py                      # -> data/evaluation_subset.json
+uv run python scripts/run_monitor.py --monitor global      # -> results/<exp>/global/
+uv run python scripts/run_monitor.py --monitor chunk       # -> results/<exp>/chunk/
+uv run python scripts/analyze.py --stage global            # metrics, per-sample, failures
+uv run python scripts/analyze.py --stage chunk
+uv run python scripts/compare.py                           # paired McNemar + length controls
+uv run python scripts/figures.py                           # 17 figures
+```
+
+Checks, both worth running before believing a results directory:
+
+```bash
+uv run python scripts/audit_pipeline.py    # 22 data-level checks against the raw parquet
+uv run python scripts/audit_leakage.py     # features that predict the label by themselves
+uv run python scripts/show_run.py 329102   # one transcript + both arms' verdicts
+```
+
+`results/` is gitignored — the numbers above are reproducible from the tracked subset plus
+the configs.
 
 ## Layout
 
 ```
-notes.md          research plan
-configs/          experiment configs (YAML)
-analysis/         notebooks
-data/
-  raw/            HF cache (gitignored)
-  processed/      derived artifacts (gitignored)
-  evaluation_subset.json   tracked — defines the reproducible eval set
-docs/             experiment log
-results/          per-experiment outputs (gitignored)
+notes.md                      research plan
+configs/                      experiment configs — fixed.yaml is current
+data/evaluation_subset.json   tracked: the 554 run IDs and how they were chosen
+docs/experiments.md           experiment log, newest last, with retractions
+docs/handoff.md               adversarial review brief + bug history
 src/monitor_localization/
-  dataset/        loading, schema, subset construction
-  monitors/       global + chunk-wise monitors, chunking, aggregation
-  prompts/        versioned monitor prompts
-  evaluation/     metrics, recovery analysis
-  utils/          logging, I/O
-scripts/          entry points
-tests/
+  dataset/                    parquet -> linear transcript, schema, subset construction
+  monitors/                   global + chunk monitors, chunking, aggregation
+  prompts/                    versioned monitor prompts (v3 = METR's, rescaled 0-100)
+  evaluation/                 metrics, paired comparison, length controls
+  llm/                        client + content-addressed response cache
+scripts/                      entry points, one per pipeline stage
+tests/                        197 tests
 ```
 
-## Pipeline
+## Deliberately out of scope
 
-| Stage | What | Output |
-|---|---|---|
-| 1 | Dataset exploration, build eval subset | `analysis/dataset_report.ipynb`, `data/evaluation_subset.json` |
-| 2 | Global monitor (whole transcript → one judgment) | `results/<exp>/global/` |
-| 3 | Global failure analysis (confusion matrix, P/R/F1, per-sample CSV) | `results/<exp>/global/metrics.json` |
-| 4 | Chunk-wise monitor (split → judge each → aggregate) | `results/<exp>/chunk/` |
-| 5 | Recovery analysis (global FN → chunk TP) | `results/<exp>/recovery/` |
+Localization annotations, hierarchical/hybrid/adaptive monitoring, synthetic benchmarks,
+multiple monitor models, multiple datasets. The codebase is structured so these drop in
+without rework.
 
-Deliberately deferred: localization annotations, hierarchical/hybrid/adaptive monitoring,
-synthetic benchmarks, multiple monitor models, multiple datasets. The codebase is structured
-so these drop in without rework.
+Known open questions — shuffled-chunk control to separate "shorter context" from "more
+draws", and a one-line prompt asymmetry between the arms — are listed in
+[`docs/handoff.md`](docs/handoff.md).
 
 ## Acknowledgements
 
-Dataset: [MALT](https://huggingface.co/datasets/metr-evals/malt-public) by METR, MIT licensed.
+Dataset: [MALT](https://huggingface.co/datasets/metr-evals/malt-public) by METR, MIT
+licensed.
 
 Portions of this codebase were written with Claude Opus 5 via Claude Code.
